@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from desloppify.base.config import (
+    DEFAULT_TARGET_STRICT_SCORE,
     MAX_TARGET_STRICT_SCORE,
     MIN_TARGET_STRICT_SCORE,
 )
@@ -37,7 +38,6 @@ _RISK_SEVERITY_ORDER = {
     "info": 4,
 }
 
-DEFAULT_TARGET_STRICT_SCORE = 95
 _HIGH_IGNORE_SUPPRESSION_THRESHOLD = 30.0
 _WONTFIX_GAP_THRESHOLD = 1.0
 

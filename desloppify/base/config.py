@@ -32,6 +32,7 @@ CONFIG_FILE = _default_config_file()
 logger = logging.getLogger(__name__)
 MIN_TARGET_STRICT_SCORE = 0
 MAX_TARGET_STRICT_SCORE = 100
+DEFAULT_TARGET_STRICT_SCORE: float = 95.0
 
 
 @dataclass(frozen=True)
@@ -415,12 +416,14 @@ def _migrate_from_state_files(config_path: Path) -> dict:
 # ── Target score helpers ─────────────────────────────────────
 
 
-def coerce_target_score(value: object, *, fallback: float = 95.0) -> float:
+def coerce_target_score(
+    value: object, *, fallback: float = DEFAULT_TARGET_STRICT_SCORE
+) -> float:
     """Normalize target score-like values to a safe [0, 100] float."""
     if is_numeric(fallback):
         fallback_value = float(fallback)
     else:
-        fallback_value = 95.0
+        fallback_value = DEFAULT_TARGET_STRICT_SCORE
 
     if is_numeric(value):
         parsed = float(value)
@@ -439,7 +442,7 @@ def coerce_target_score(value: object, *, fallback: float = 95.0) -> float:
 
 
 def target_strict_score_from_config(
-    config: dict | None, *, fallback: float = 95.0
+    config: dict | None, *, fallback: float = DEFAULT_TARGET_STRICT_SCORE
 ) -> float:
     """Read and normalize target strict score from config."""
     if isinstance(config, dict):

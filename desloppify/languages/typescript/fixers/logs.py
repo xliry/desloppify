@@ -5,6 +5,7 @@ import sys
 
 from desloppify.base.discovery.api import rel
 from desloppify.base.output.terminal import colorize
+from desloppify.languages._framework.base.types import FixResult
 from desloppify.languages.typescript.fixers.fixer_io import apply_fixer
 from desloppify.languages.typescript.fixers.syntax_scan import (
     collapse_blank_lines,
@@ -104,7 +105,7 @@ _CONTROL_FLOW_NAMES = frozenset(
 )
 
 
-def fix_debug_logs(entries: list[dict], *, dry_run: bool = False) -> list[dict]:
+def fix_debug_logs(entries: list[dict], *, dry_run: bool = False) -> FixResult:
     """Remove tagged console.log lines and clean up aftermath (dead vars, empty blocks)."""
     entries_by_file: dict[str, list[dict]] = {}
     for e in entries:
@@ -140,7 +141,7 @@ def fix_debug_logs(entries: list[dict], *, dry_run: bool = False) -> list[dict]:
         return new_lines, tags
 
     raw_results = apply_fixer(entries, _transform, dry_run=dry_run)
-    return [
+    return FixResult(entries=[
         {
             "file": r["file"],
             "removed": r["removed"],
@@ -149,7 +150,7 @@ def fix_debug_logs(entries: list[dict], *, dry_run: bool = False) -> list[dict]:
             "log_count": len(entries_by_file.get(r["file"], [])),
         }
         for r in raw_results
-    ]
+    ])
 
 
 def _normalize_wrapper_name(raw: str | None) -> str:

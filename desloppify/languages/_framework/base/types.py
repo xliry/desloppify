@@ -143,7 +143,7 @@ class FixerConfig:
 
     label: str
     detect: Callable[[Path], list[dict]]
-    fix: Callable[..., FixResult | list[dict]]
+    fix: Callable[..., FixResult]
     detector: str  # issue detector name (for state resolution)
     verb: str = "Fixed"
     dry_verb: str = "Would fix"

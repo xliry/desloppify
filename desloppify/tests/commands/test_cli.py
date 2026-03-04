@@ -17,7 +17,7 @@ from desloppify.app.commands.helpers.runtime_options import (
     LangRuntimeOptionsError,
     resolve_lang_runtime_options,
 )
-from desloppify.app.commands.helpers.score import (
+from desloppify.base.config import (
     coerce_target_score,
     target_strict_score_from_config,
 )

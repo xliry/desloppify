@@ -153,16 +153,15 @@ def _det_smell(smell_id):
 
 def _fix_vars(entries, *, dry_run=False):
     """Fix unused vars, returning FixResult."""
-    results, skip_reasons = ts_fixers_mod.fix_unused_vars(entries, dry_run=dry_run)
-    return FixResult(entries=results, skip_reasons=skip_reasons)
+    return ts_fixers_mod.fix_unused_vars(entries, dry_run=dry_run)
 
 
 def _fix_logs(entries, *, dry_run=False):
     """Fix debug logs, normalizing result keys."""
-    results = ts_fixers_mod.fix_debug_logs(entries, dry_run=dry_run)
-    for r in results:
+    result = ts_fixers_mod.fix_debug_logs(entries, dry_run=dry_run)
+    for r in result.entries:
         r["removed"] = r.get("tags", r.get("removed", []))
-    return results
+    return result
 
 
 def _get_ts_fixers() -> dict[str, FixerConfig]:

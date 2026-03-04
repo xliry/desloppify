@@ -713,7 +713,7 @@ class TestReplaceSection:
         assert "new section" in result
 
     def test_replaces_between_markers(self):
-        from desloppify.base.skill_docs import SKILL_BEGIN, SKILL_END
+        from desloppify.app.skill_docs import SKILL_BEGIN, SKILL_END
         content = f"before\n{SKILL_BEGIN}\nold content\n{SKILL_END}\nafter"
         result = _replace_section(content, "new section")
         assert "old content" not in result
@@ -722,14 +722,14 @@ class TestReplaceSection:
         assert "after" in result
 
     def test_handles_empty_before(self):
-        from desloppify.base.skill_docs import SKILL_BEGIN, SKILL_END
+        from desloppify.app.skill_docs import SKILL_BEGIN, SKILL_END
         content = f"{SKILL_BEGIN}\nold\n{SKILL_END}\nafter"
         result = _replace_section(content, "new")
         assert "new" in result
         assert "after" in result
 
     def test_handles_empty_after(self):
-        from desloppify.base.skill_docs import SKILL_BEGIN, SKILL_END
+        from desloppify.app.skill_docs import SKILL_BEGIN, SKILL_END
         content = f"before\n{SKILL_BEGIN}\nold\n{SKILL_END}"
         result = _replace_section(content, "new")
         assert "new" in result
@@ -749,7 +749,7 @@ class TestResolveInterface:
             assert resolve_interface(None) is None
 
     def test_from_install_overlay(self):
-        from desloppify.base.skill_docs import SkillInstall
+        from desloppify.app.skill_docs import SkillInstall
         install = SkillInstall(
             rel_path=".claude/skills/desloppify/SKILL.md",
             version=1,
@@ -760,7 +760,7 @@ class TestResolveInterface:
         assert result == "claude"
 
     def test_from_install_path_match(self):
-        from desloppify.base.skill_docs import SkillInstall
+        from desloppify.app.skill_docs import SkillInstall
         install = SkillInstall(
             rel_path=".claude/skills/desloppify/SKILL.md",
             version=1,
@@ -771,7 +771,7 @@ class TestResolveInterface:
         assert result == "claude"
 
     def test_from_install_path_match_opencode(self):
-        from desloppify.base.skill_docs import SkillInstall
+        from desloppify.app.skill_docs import SkillInstall
 
         install = SkillInstall(
             rel_path=".opencode/skills/desloppify/SKILL.md",
@@ -783,7 +783,7 @@ class TestResolveInterface:
         assert result == "opencode"
 
     def test_from_install_no_match(self):
-        from desloppify.base.skill_docs import SkillInstall
+        from desloppify.app.skill_docs import SkillInstall
         install = SkillInstall(
             rel_path="unknown/path.md",
             version=1,

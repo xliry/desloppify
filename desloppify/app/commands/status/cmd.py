@@ -16,7 +16,7 @@ from desloppify.app.commands.helpers.queue_progress import (
     print_frozen_score_with_queue_context,
 )
 from desloppify.app.commands.helpers.runtime import command_runtime
-from desloppify.app.commands.helpers.score import target_strict_score_from_config
+from desloppify.base.config import target_strict_score_from_config
 from desloppify.app.commands.helpers.state import require_completed_scan
 from desloppify.app.commands.next.render_nudges import (
     render_uncommitted_reminder,
@@ -26,7 +26,7 @@ from desloppify.app.commands.scan.reporting import (
 )
 from desloppify.base.exception_sets import PLAN_LOAD_EXCEPTIONS
 from desloppify.base.output.terminal import colorize
-from desloppify.base.skill_docs import check_skill_version
+from desloppify.app.skill_docs import check_skill_version
 from desloppify.base.tooling import check_config_staleness
 from desloppify.engine._scoring.results.core import compute_health_breakdown
 from desloppify.engine._work_queue.context import queue_context
@@ -95,7 +95,7 @@ def cmd_status(args: argparse.Namespace) -> None:
 
     scores = state_mod.score_snapshot(state)
     by_tier = stats.get("by_tier", {})
-    target_strict_score = target_strict_score_from_config(config, fallback=95.0)
+    target_strict_score = target_strict_score_from_config(config)
 
     lang = resolve_lang(args)
     lang_name = lang.name if lang else None

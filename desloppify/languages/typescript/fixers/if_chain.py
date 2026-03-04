@@ -2,6 +2,7 @@
 
 from typing import Any
 
+from desloppify.languages._framework.base.types import FixResult
 from desloppify.languages.typescript.detectors._smell_helpers import scan_code
 from desloppify.languages.typescript.fixers.fixer_io import apply_fixer
 from desloppify.languages.typescript.fixers.syntax_scan import collapse_blank_lines
@@ -11,7 +12,7 @@ def fix_empty_if_chain(
     entries: list[dict[str, Any]],
     *,
     dry_run: bool = False,
-) -> list[dict[str, Any]]:
+) -> FixResult:
     """Delete if/else chains where all branches are empty."""
 
     def transform(
@@ -32,7 +33,7 @@ def fix_empty_if_chain(
         new_lines = collapse_blank_lines(lines, lines_to_remove)
         return new_lines, ["empty_if_chain"]
 
-    return apply_fixer(entries, transform, dry_run=dry_run)
+    return FixResult(entries=apply_fixer(entries, transform, dry_run=dry_run))
 
 
 def _find_if_chain_end(lines: list[str], start: int) -> int:

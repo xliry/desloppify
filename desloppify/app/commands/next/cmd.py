@@ -14,12 +14,12 @@ from desloppify.app.commands.helpers.queue_progress import (
     plan_aware_queue_breakdown,
 )
 from desloppify.app.commands.helpers.runtime import command_runtime
-from desloppify.app.commands.helpers.score import target_strict_score_from_config
+from desloppify.base.config import DEFAULT_TARGET_STRICT_SCORE, target_strict_score_from_config
 from desloppify.app.commands.helpers.state import require_completed_scan
 from desloppify.base.discovery.api import safe_write_text
 from desloppify.base.exception_sets import PLAN_LOAD_EXCEPTIONS
 from desloppify.base.output.terminal import colorize
-from desloppify.base.skill_docs import check_skill_version
+from desloppify.app.skill_docs import check_skill_version
 from desloppify.base.tooling import check_config_staleness
 from desloppify.engine._scoring.detection import merge_potentials
 from desloppify.engine._work_queue.context import queue_context
@@ -53,7 +53,7 @@ def _low_subjective_dimensions(
     state: dict,
     dim_scores: dict,
     *,
-    threshold: float = 95.0,
+    threshold: float = DEFAULT_TARGET_STRICT_SCORE,
 ) -> list[tuple[str, float, int]]:
     """Return assessed scorecard-subjective entries below the threshold."""
     low: list[tuple[str, float, int]] = []
@@ -185,7 +185,7 @@ def _get_items(args, state: dict, config: dict) -> None:
     cluster_arg = getattr(args, "cluster", None)
     include_skipped = bool(getattr(args, "include_skipped", False))
 
-    target_strict = target_strict_score_from_config(config, fallback=95.0)
+    target_strict = target_strict_score_from_config(config)
 
     # Load the living plan
     plan = load_plan()

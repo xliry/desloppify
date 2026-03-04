@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from desloppify import state as state_mod
+from desloppify.base.config import DEFAULT_TARGET_STRICT_SCORE
 from desloppify.base.exception_sets import PLAN_LOAD_EXCEPTIONS
 from desloppify.base.output.terminal import colorize
 from desloppify.engine.plan import (
@@ -87,7 +88,7 @@ def _sync_auto_clusters(
     plan: dict[str, object],
     state: state_mod.StateModel,
     *,
-    target_strict: float = 95.0,
+    target_strict: float = DEFAULT_TARGET_STRICT_SCORE,
     policy=None,
     cycle_just_completed: bool = False,
 ) -> bool:
@@ -148,10 +149,10 @@ def _subjective_policy_context(
     runtime: ScanRuntime,
     plan: dict[str, object],
 ) -> tuple[float, object, bool]:
-    from desloppify.app.commands.helpers.score import target_strict_score_from_config
+    from desloppify.base.config import target_strict_score_from_config
     from desloppify.engine.plan import compute_subjective_visibility
 
-    target_strict = target_strict_score_from_config(runtime.config, fallback=95.0)
+    target_strict = target_strict_score_from_config(runtime.config)
     policy = compute_subjective_visibility(
         runtime.state,
         target_strict=target_strict,

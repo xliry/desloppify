@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from desloppify.app.commands.scan.reporting.presentation import dimension_bar
+from desloppify.base.config import DEFAULT_TARGET_STRICT_SCORE
 from desloppify.base.output.terminal import colorize
 from desloppify.base.registry import dimension_action_type
 from desloppify.engine._scoring.policy.core import DIMENSIONS
@@ -131,7 +132,7 @@ def render_subjective_dimensions(
             issue_count = int(sum(review_issue_counts.get(key, 0) for key in cli_keys))
         else:
             issue_count = 0
-        issue_style = "yellow" if strict_val < 95.0 and issue_count == 0 else "dim"
+        issue_style = "yellow" if strict_val < DEFAULT_TARGET_STRICT_SCORE and issue_count == 0 else "dim"
         issue_tag = colorize(f" [open issues: {issue_count}]", issue_style)
         print(
             f"  {name:<22} {checks_str}  {score_val:5.1f}%  {strict_val:5.1f}%  {bar}  T{tier}  {'review'}{focus}{stale_tag}"

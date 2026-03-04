@@ -14,6 +14,7 @@ from desloppify.app.commands.scan.reporting.subjective import (
     subjective_integrity_notice_lines,
     subjective_rerun_command,
 )
+from desloppify.base.config import DEFAULT_TARGET_STRICT_SCORE
 from desloppify.base import registry as registry_mod
 from desloppify.base.output.terminal import colorize
 from desloppify.engine.planning.scorecard_projection import (
@@ -179,7 +180,7 @@ def show_subjective_paths_section(
     state: dict,
     dim_scores: dict,
     *,
-    threshold: float = 95.0,
+    threshold: float = DEFAULT_TARGET_STRICT_SCORE,
 ) -> None:
     """Show explicit subjective-score improvement paths (coverage vs quality)."""
     return show_subjective_paths(

@@ -2,6 +2,7 @@
 
 from typing import Any
 
+from desloppify.languages._framework.base.types import FixResult
 from desloppify.languages.typescript.fixers.fixer_io import apply_fixer
 from desloppify.languages.typescript.fixers.syntax_scan import (
     collapse_blank_lines,
@@ -13,7 +14,7 @@ def fix_dead_useeffect(
     entries: list[dict[str, Any]],
     *,
     dry_run: bool = False,
-) -> list[dict[str, Any]]:
+) -> FixResult:
     """Delete useEffect calls with empty/comment-only bodies."""
 
     def transform(
@@ -41,4 +42,4 @@ def fix_dead_useeffect(
         new_lines = collapse_blank_lines(lines, lines_to_remove)
         return new_lines, ["dead_useeffect"]
 
-    return apply_fixer(entries, transform, dry_run=dry_run)
+    return FixResult(entries=apply_fixer(entries, transform, dry_run=dry_run))

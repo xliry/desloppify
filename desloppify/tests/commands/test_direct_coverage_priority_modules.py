@@ -22,7 +22,7 @@ import desloppify.app.commands.status.render_structural as status_render_structu
 import desloppify.base.compatibility as compatibility_mod
 import desloppify.base.search.grep as grep_mod
 import desloppify.base.output.terminal as output_mod
-import desloppify.base.skill_docs as skill_docs_mod
+import desloppify.app.skill_docs as skill_docs_mod
 import desloppify.base.subjective_dimensions as subjective_dimensions_mod
 import desloppify.base.text.text_api as text_api_mod
 import desloppify.engine._plan.schema_migrations as schema_migrations_mod

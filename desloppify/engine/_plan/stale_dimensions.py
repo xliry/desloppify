@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field
 
+from desloppify.base.config import DEFAULT_TARGET_STRICT_SCORE
 from desloppify.engine._plan.promoted_ids import promoted_insertion_index
 from desloppify.engine._plan.schema import PlanModel, ensure_plan_defaults
 from desloppify.engine._plan.subjective_policy import (
@@ -138,7 +139,7 @@ def current_unscored_ids(state: StateModel) -> set[str]:
 def current_under_target_ids(
     state: StateModel,
     *,
-    target_strict: float = 95.0,
+    target_strict: float = DEFAULT_TARGET_STRICT_SCORE,
 ) -> set[str]:
     """Return ``subjective::<slug>`` IDs that are under target but not stale or unscored.
 

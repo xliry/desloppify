@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from desloppify.base.config import DEFAULT_TARGET_STRICT_SCORE
 from desloppify.engine._state.schema import StateModel
 from desloppify.engine._work_queue.core import (
     QueueBuildOptions,
@@ -12,7 +13,7 @@ from desloppify.engine._work_queue.core import (
 )
 
 
-def _subjective_threshold(state: StateModel, *, default: float = 95.0) -> float:
+def _subjective_threshold(state: StateModel, *, default: float = DEFAULT_TARGET_STRICT_SCORE) -> float:
     config = state.get("config", {})
     raw_target = default
     if isinstance(config, dict):

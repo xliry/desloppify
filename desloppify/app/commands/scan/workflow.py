@@ -14,7 +14,7 @@ from desloppify import state as state_mod
 from desloppify.app.commands.helpers.lang import resolve_lang, resolve_lang_settings
 from desloppify.app.commands.helpers.runtime import command_runtime
 from desloppify.app.commands.helpers.runtime_options import resolve_lang_runtime_options
-from desloppify.app.commands.helpers.score import target_strict_score_from_config
+from desloppify.base.config import target_strict_score_from_config
 from desloppify.app.commands.scan.coverage import (
     coerce_int as _coerce_int,
 )
@@ -200,6 +200,25 @@ def _configure_lang_runtime(
     return runtime_lang
 
 
+def _apply_assessment_reset(payload: dict, *, source: str, now: str) -> None:
+    """Apply a standard reset mutation to a single subjective assessment payload.
+
+    Sets score to 0.0, stamps assessed_at/reset_by/placeholder, and strips
+    any cached scoring artifacts (integrity_penalty, components,
+    component_scores) plus provisional-override markers.
+    """
+    payload["score"] = 0.0
+    payload["source"] = source
+    payload["assessed_at"] = now
+    payload["reset_by"] = source
+    payload["placeholder"] = True
+    payload.pop("integrity_penalty", None)
+    payload.pop("components", None)
+    payload.pop("component_scores", None)
+    payload.pop("provisional_override", None)
+    payload.pop("provisional_until_scan", None)
+
+
 def _reset_subjective_assessments_for_scan_reset(
     state: state_mod.StateModel,
     *,
@@ -216,23 +235,17 @@ def _reset_subjective_assessments_for_scan_reset(
     reset_keys.update(_subjective_reset_dimensions(lang_name=lang_name))
 
     now = state_mod.utc_now()
+    source = "scan_reset_subjective"
     for key in sorted(reset_keys):
         payload = assessments.get(key)
         if isinstance(payload, dict):
-            payload["score"] = 0.0
-            payload["source"] = "scan_reset_subjective"
-            payload["assessed_at"] = now
-            payload["reset_by"] = "scan_reset_subjective"
-            payload["placeholder"] = True
-            payload.pop("integrity_penalty", None)
-            payload.pop("components", None)
-            payload.pop("component_scores", None)
+            _apply_assessment_reset(payload, source=source, now=now)
             continue
         assessments[key] = {
             "score": 0.0,
-            "source": "scan_reset_subjective",
+            "source": source,
             "assessed_at": now,
-            "reset_by": "scan_reset_subjective",
+            "reset_by": source,
             "placeholder": True,
         }
     return len(reset_keys)
@@ -245,22 +258,14 @@ def _expire_provisional_manual_override_assessments(
     assessments = _state_subjective_assessments(state)
 
     now = state_mod.utc_now()
+    source = "manual_override_expired"
     expired = 0
     for payload in assessments.values():
         if not isinstance(payload, dict):
             continue
         if payload.get("provisional_override") is not True:
             continue
-        payload["score"] = 0.0
-        payload["source"] = "manual_override_expired"
-        payload["assessed_at"] = now
-        payload["reset_by"] = "manual_override_expired"
-        payload["placeholder"] = True
-        payload.pop("provisional_override", None)
-        payload.pop("provisional_until_scan", None)
-        payload.pop("integrity_penalty", None)
-        payload.pop("components", None)
-        payload.pop("component_scores", None)
+        _apply_assessment_reset(payload, source=source, now=now)
         expired += 1
     return expired
 
@@ -410,7 +415,7 @@ def merge_scan_results(
         runtime.state["zone_distribution"] = runtime.lang.zone_map.counts()
     _persist_scan_coverage(runtime.state, runtime.lang)
 
-    target_score = target_strict_score_from_config(runtime.config, fallback=95.0)
+    target_score = target_strict_score_from_config(runtime.config)
 
     diff = state_mod.merge_scan(
         runtime.state,
@@ -490,7 +495,7 @@ def persist_reminder_history(
         return
 
     runtime.state["reminder_history"] = narrative["reminder_history"]
-    target_score = target_strict_score_from_config(runtime.config, fallback=95.0)
+    target_score = target_strict_score_from_config(runtime.config)
     state_mod.save_state(
         runtime.state,
         runtime.state_path,

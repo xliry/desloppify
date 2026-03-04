@@ -10,7 +10,7 @@ from desloppify.app.commands.helpers.runtime_options import (
     LangRuntimeOptionsError,
     print_lang_runtime_options_error,
 )
-from desloppify.app.commands.helpers.score import target_strict_score_from_config
+from desloppify.base.config import target_strict_score_from_config
 from desloppify.app.commands.scan.artifacts import (
     build_scan_query_payload,
     emit_scorecard_badge,
@@ -165,7 +165,7 @@ def cmd_scan(args: argparse.Namespace) -> None:
 
     noise = orchestrator.noise_snapshot()
 
-    target_value = target_strict_score_from_config(runtime.config, fallback=95.0)
+    target_value = target_strict_score_from_config(runtime.config)
 
     show_diff_summary(merge.diff)
     show_score_delta(

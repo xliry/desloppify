@@ -237,8 +237,8 @@ class TestFixUnusedImports:
         entries = [
             {"file": str(ts_file), "name": "unused", "line": 1, "category": "imports"},
         ]
-        results = fix_unused_imports(entries, dry_run=False)
-        assert len(results) == 1
+        result = fix_unused_imports(entries, dry_run=False)
+        assert len(result.entries) == 1
         content = ts_file.read_text()
         assert "unused" not in content
         assert "used" in content
@@ -293,8 +293,8 @@ class TestFixUnusedImports:
         entries = [
             {"file": str(ts_file), "name": "x", "line": 1, "category": "vars"},
         ]
-        results = fix_unused_imports(entries, dry_run=False)
-        assert results == []
+        result = fix_unused_imports(entries, dry_run=False)
+        assert result.entries == []
 
     def test_dry_run(self, tmp_path):
         """dry_run=True reports changes without writing."""
@@ -304,8 +304,8 @@ class TestFixUnusedImports:
         entries = [
             {"file": str(ts_file), "name": "unused", "line": 1, "category": "imports"},
         ]
-        results = fix_unused_imports(entries, dry_run=True)
-        assert len(results) == 1
+        result = fix_unused_imports(entries, dry_run=True)
+        assert len(result.entries) == 1
         assert ts_file.read_text() == original
 
     def test_removes_alias_by_local_name_with_inline_comment(self, tmp_path):
@@ -318,11 +318,11 @@ class TestFixUnusedImports:
             {"file": str(ts_file), "name": "bar", "line": 1, "category": "imports"},
         ]
 
-        results = fix_unused_imports(entries, dry_run=False)
+        result = fix_unused_imports(entries, dry_run=False)
         content = ts_file.read_text()
 
-        assert len(results) == 1
-        assert results[0]["removed"] == ["bar"]
+        assert len(result.entries) == 1
+        assert result.entries[0]["removed"] == ["bar"]
         assert "foo as bar" not in content
         assert "{ baz }" in content
         assert "// keep" in content
@@ -338,11 +338,11 @@ class TestFixUnusedImports:
             {"file": str(ts_file), "name": "Request", "line": 1, "category": "imports"},
         ]
 
-        results = fix_unused_imports(entries, dry_run=False)
+        result = fix_unused_imports(entries, dry_run=False)
         content = ts_file.read_text()
 
-        assert len(results) == 1
-        assert results[0]["removed"] == ["Request"]
+        assert len(result.entries) == 1
+        assert result.entries[0]["removed"] == ["Request"]
         assert "type Request" not in content
         assert "randomUUID" in content
 
@@ -354,11 +354,11 @@ class TestFixUnusedImports:
             {"file": str(ts_file), "name": "utils", "line": 1, "category": "imports"},
         ]
 
-        results = fix_unused_imports(entries, dry_run=False)
+        result = fix_unused_imports(entries, dry_run=False)
         content = ts_file.read_text()
 
-        assert len(results) == 1
-        assert results[0]["removed"] == ["utils"]
+        assert len(result.entries) == 1
+        assert result.entries[0]["removed"] == ["utils"]
         assert "import * as utils" not in content
 
 
@@ -384,8 +384,8 @@ class TestFixUnusedVars:
         """)
         )
         entries = [{"file": str(ts_file), "name": "beta", "line": 3}]
-        results, skips = fix_unused_vars(entries, dry_run=False)
-        assert len(results) == 1
+        result = fix_unused_vars(entries, dry_run=False)
+        assert len(result.entries) == 1
         content = ts_file.read_text()
         # beta should be gone from the destructuring
         assert "beta" not in content
@@ -397,8 +397,8 @@ class TestFixUnusedVars:
         ts_file = tmp_path / "comp.ts"
         ts_file.write_text("const { a, unused, b } = obj;\n")
         entries = [{"file": str(ts_file), "name": "unused", "line": 1}]
-        results, skips = fix_unused_vars(entries, dry_run=False)
-        assert len(results) == 1
+        result = fix_unused_vars(entries, dry_run=False)
+        assert len(result.entries) == 1
         content = ts_file.read_text()
         assert "unused" not in content
         assert "a" in content
@@ -409,9 +409,9 @@ class TestFixUnusedVars:
         ts_file = tmp_path / "comp.ts"
         ts_file.write_text("const { a, unused, ...rest } = obj;\n")
         entries = [{"file": str(ts_file), "name": "unused", "line": 1}]
-        results, skips = fix_unused_vars(entries, dry_run=False)
-        assert results == []
-        assert skips.get("rest_element", 0) > 0
+        result = fix_unused_vars(entries, dry_run=False)
+        assert result.entries == []
+        assert result.skip_reasons.get("rest_element", 0) > 0
 
     def test_remove_standalone_var(self, tmp_path):
         """A standalone const assignment is removed entirely."""
@@ -424,8 +424,8 @@ class TestFixUnusedVars:
         """)
         )
         entries = [{"file": str(ts_file), "name": "unused", "line": 1}]
-        results, skips = fix_unused_vars(entries, dry_run=False)
-        assert len(results) == 1
+        result = fix_unused_vars(entries, dry_run=False)
+        assert len(result.entries) == 1
         content = ts_file.read_text()
         assert "unused" not in content
         assert "used" in content
@@ -436,7 +436,7 @@ class TestFixUnusedVars:
         original = "const { a, unused } = obj;\n"
         ts_file.write_text(original)
         entries = [{"file": str(ts_file), "name": "unused", "line": 1}]
-        results, _ = fix_unused_vars(entries, dry_run=True)
+        result = fix_unused_vars(entries, dry_run=True)
         assert ts_file.read_text() == original
 
 
@@ -467,8 +467,8 @@ class TestFixDebugLogs:
                 "content": "console.log('[DEBUG] test');",
             }
         ]
-        results = fix_debug_logs(entries, dry_run=False)
-        assert len(results) == 1
+        result = fix_debug_logs(entries, dry_run=False)
+        assert len(result.entries) == 1
         content = ts_file.read_text()
         assert "console.log" not in content
         assert "return 1;" in content
@@ -490,8 +490,8 @@ class TestFixDebugLogs:
         entries = [
             {"file": str(ts_file), "line": 2, "tag": "DEBUG", "content": "console.log("}
         ]
-        results = fix_debug_logs(entries, dry_run=False)
-        assert len(results) == 1
+        result = fix_debug_logs(entries, dry_run=False)
+        assert len(result.entries) == 1
         content = ts_file.read_text()
         assert "console.log" not in content
         assert "return 1;" in content
@@ -546,8 +546,8 @@ class TestFixDebugLogs:
                 "content": "warn: (msg: string) => console.log('[APP] ' + msg),",
             },
         ]
-        results = fix_debug_logs(entries, dry_run=False)
-        assert results == []
+        result = fix_debug_logs(entries, dry_run=False)
+        assert result.entries == []
         content = ts_file.read_text()
         assert "info:" in content
         assert "warn:" in content
@@ -573,8 +573,8 @@ class TestFixDebugLogs:
                 "content": "console.log('[APP] ' + msg);",
             }
         ]
-        results = fix_debug_logs(entries, dry_run=False)
-        assert results == []
+        result = fix_debug_logs(entries, dry_run=False)
+        assert result.entries == []
         content = ts_file.read_text()
         assert "info(msg: string)" in content
         assert "console.log('[APP] '" in content
@@ -592,8 +592,8 @@ class TestFixDebugLogs:
                 "content": "console.log('[DEBUG] x');",
             }
         ]
-        results = fix_debug_logs(entries, dry_run=True)
-        assert len(results) == 1
+        result = fix_debug_logs(entries, dry_run=True)
+        assert len(result.entries) == 1
         assert ts_file.read_text() == original
 
     def test_result_metadata(self, tmp_path):
@@ -608,9 +608,9 @@ class TestFixDebugLogs:
                 "content": "console.log('[TRACE] hi');",
             }
         ]
-        results = fix_debug_logs(entries, dry_run=False)
-        assert len(results) == 1
-        r = results[0]
+        result = fix_debug_logs(entries, dry_run=False)
+        assert len(result.entries) == 1
+        r = result.entries[0]
         assert "tags" in r
         assert "TRACE" in r["tags"]
         assert "lines_removed" in r
@@ -664,8 +664,8 @@ class TestFixUnusedParams:
                 "category": "vars",
             },
         ]
-        results = fix_unused_params(entries, dry_run=False)
-        assert len(results) == 1
+        result = fix_unused_params(entries, dry_run=False)
+        assert len(result.entries) == 1
         content = ts_file.read_text()
         assert "_event" in content
         assert "context" in content  # untouched
@@ -683,8 +683,8 @@ class TestFixUnusedParams:
                 "category": "vars",
             },
         ]
-        results = fix_unused_params(entries, dry_run=False)
-        assert results == []
+        result = fix_unused_params(entries, dry_run=False)
+        assert result.entries == []
 
     def test_dry_run(self, tmp_path):
         """dry_run=True does not modify the file."""
@@ -756,8 +756,8 @@ class TestFixEmptyIfChain:
         """)
         )
         entries = [{"file": str(ts_file), "line": 1, "content": "if (x) {"}]
-        results = fix_empty_if_chain(entries, dry_run=False)
-        assert len(results) == 1
+        result = fix_empty_if_chain(entries, dry_run=False)
+        assert len(result.entries) == 1
         content = ts_file.read_text()
         assert "if (x)" not in content
         assert "const y = 1;" in content
@@ -768,8 +768,8 @@ class TestFixEmptyIfChain:
         original = "if (x) {\n}\nconst y = 1;\n"
         ts_file.write_text(original)
         entries = [{"file": str(ts_file), "line": 1, "content": "if (x) {"}]
-        results = fix_empty_if_chain(entries, dry_run=True)
-        assert len(results) == 1
+        result = fix_empty_if_chain(entries, dry_run=True)
+        assert len(result.entries) == 1
         assert ts_file.read_text() == original
 
 
@@ -792,8 +792,8 @@ class TestFixDeadUseEffect:
         """)
         )
         entries = [{"file": str(ts_file), "line": 1, "content": "useEffect(() => {"}]
-        results = fix_dead_useeffect(entries, dry_run=False)
-        assert len(results) == 1
+        result = fix_dead_useeffect(entries, dry_run=False)
+        assert len(result.entries) == 1
         content = ts_file.read_text()
         assert "useEffect" not in content
         assert "const x = 1;" in content
@@ -821,5 +821,5 @@ class TestFixDeadUseEffect:
         original = "useEffect(() => {\n}, []);\nconst x = 1;\n"
         ts_file.write_text(original)
         entries = [{"file": str(ts_file), "line": 1, "content": "useEffect(() => {"}]
-        assert len(fix_dead_useeffect(entries, dry_run=True)) == 1
+        assert len(fix_dead_useeffect(entries, dry_run=True).entries) == 1
         assert ts_file.read_text() == original

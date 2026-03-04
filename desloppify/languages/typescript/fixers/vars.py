@@ -4,6 +4,7 @@ import re
 from collections import defaultdict
 from typing import NamedTuple
 
+from desloppify.languages._framework.base.types import FixResult
 from desloppify.languages.typescript.fixers.fixer_io import apply_fixer
 from desloppify.languages.typescript.fixers.syntax_scan import collapse_blank_lines
 
@@ -96,10 +97,10 @@ def _apply_inline_removals(
 
 def fix_unused_vars(
     entries: list[dict], *, dry_run: bool = False
-) -> tuple[list[dict], dict[str, int]]:
+) -> FixResult:
     """Remove unused names from destructuring patterns.
 
-    Returns (results, skip_reasons) where skip_reasons maps reason string to count.
+    Returns a FixResult with entries and skip_reasons.
     """
     skip_reasons: dict[str, int] = defaultdict(int)
 
@@ -121,7 +122,7 @@ def fix_unused_vars(
         return new_lines, removed_names
 
     results = apply_fixer(entries, _transform, dry_run=dry_run)
-    return results, dict(skip_reasons)
+    return FixResult(entries=results, skip_reasons=dict(skip_reasons))
 
 
 def _is_destr_member_line(stripped: str, name: str) -> bool:

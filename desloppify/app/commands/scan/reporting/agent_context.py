@@ -13,7 +13,7 @@ from desloppify.app.commands.update_skill import (
     update_installed_skill,
 )
 from desloppify.base import registry as registry_mod
-from desloppify.base import skill_docs as skill_docs_mod
+from desloppify.app import skill_docs as skill_docs_mod
 from desloppify.base.exception_sets import PLAN_LOAD_EXCEPTIONS
 from desloppify.base.output.fallbacks import log_best_effort_failure
 from desloppify.base.text.text_api import get_project_root

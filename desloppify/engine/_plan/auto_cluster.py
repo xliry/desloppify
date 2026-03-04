@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from collections import defaultdict
 
+from desloppify.base.config import DEFAULT_TARGET_STRICT_SCORE
 from desloppify.base.registry import DETECTORS, DetectorMeta
 from desloppify.engine._plan.schema import Cluster, PlanModel, ensure_plan_defaults
 from desloppify.engine._plan.stale_dimensions import (
@@ -601,7 +602,7 @@ def auto_cluster_issues(
     plan: PlanModel,
     state: StateModel,
     *,
-    target_strict: float = 95.0,
+    target_strict: float = DEFAULT_TARGET_STRICT_SCORE,
     policy: SubjectiveVisibility | None = None,
     cycle_just_completed: bool = False,
 ) -> int:

@@ -177,6 +177,68 @@ def _print_subjective_integrity_warning(
     )
 
 
+def _print_score_quartet(
+    new: state_mod.ScoreSnapshot,
+    prev_overall: float | None,
+    prev_objective: float | None,
+    prev_strict: float | None,
+    prev_verified: float | None,
+    non_comparable_reason: str | None,
+) -> None:
+    """Print the four-score comparison line with deltas."""
+    overall_delta_str, overall_color = format_delta(new.overall, prev_overall)
+    objective_delta_str, objective_color = format_delta(new.objective, prev_objective)
+    strict_delta_str, strict_color = format_delta(new.strict, prev_strict)
+    verified_delta_str, verified_color = format_delta(new.verified, prev_verified)
+    print(
+        "  Scores: "
+        + colorize(f"overall {new.overall:.1f}/100{overall_delta_str}", overall_color)
+        + colorize(
+            f"  objective {new.objective:.1f}/100{objective_delta_str}",
+            objective_color,
+        )
+        + colorize(f"  strict {new.strict:.1f}/100{strict_delta_str}", strict_color)
+        + colorize(
+            f"  verified {new.verified:.1f}/100{verified_delta_str}",
+            verified_color,
+        )
+    )
+    if isinstance(non_comparable_reason, str) and non_comparable_reason.strip():
+        print(colorize(f"  Δ non-comparable: {non_comparable_reason.strip()}", "yellow"))
+
+
+def _print_wontfix_gap(
+    wontfix: int,
+    gap: float,
+) -> None:
+    """Print a yellow warning when the overall-vs-strict gap is significant."""
+    if gap >= 5 and wontfix >= 10:
+        print(
+            colorize(
+                f"  ⚠ {gap:.1f}-point gap between overall and strict — "
+                f"{wontfix} wontfix items represent hidden debt",
+                "yellow",
+            )
+        )
+
+
+def _print_score_legend(
+    state: StateModel,
+    gap: float,
+) -> None:
+    """Show the score guide on first scan, large gap, or agent environments."""
+    scan_count = state.get("scan_count", 0)
+    if scan_count <= 1 or gap > 10 or is_agent_environment():
+        _print_score_guide()
+
+
+def _print_integrity_warnings(state: StateModel) -> None:
+    """Print subjective-integrity warnings when present."""
+    integrity = state.get("subjective_integrity", {})
+    if isinstance(integrity, dict):
+        _print_subjective_integrity_warning(state, integrity)
+
+
 def show_score_delta(
     state: StateModel,
     prev_overall: float | None,
@@ -200,52 +262,21 @@ def show_score_delta(
         )
         return
 
-    # Detect score-reveal scan: plan_start_scores existed and queue was clear
     _show_score_reveal(state, new, target_strict=target_strict)
 
-    overall_delta_str, overall_color = format_delta(new.overall, prev_overall)
-    objective_delta_str, objective_color = format_delta(new.objective, prev_objective)
-    strict_delta_str, strict_color = format_delta(new.strict, prev_strict)
-    verified_delta_str, verified_color = format_delta(new.verified, prev_verified)
-    print(
-        "  Scores: "
-        + colorize(f"overall {new.overall:.1f}/100{overall_delta_str}", overall_color)
-        + colorize(
-            f"  objective {new.objective:.1f}/100{objective_delta_str}",
-            objective_color,
-        )
-        + colorize(f"  strict {new.strict:.1f}/100{strict_delta_str}", strict_color)
-        + colorize(
-            f"  verified {new.verified:.1f}/100{verified_delta_str}",
-            verified_color,
-        )
+    _print_score_quartet(
+        new, prev_overall, prev_objective, prev_strict, prev_verified,
+        non_comparable_reason,
     )
-    if isinstance(non_comparable_reason, str) and non_comparable_reason.strip():
-        print(colorize(f"  Δ non-comparable: {non_comparable_reason.strip()}", "yellow"))
-    # Surface wontfix debt gap prominently when significant
-    wontfix = stats.get("wontfix", 0)
+
     gap = (new.overall or 0) - (new.strict or 0)
-    if gap >= 5 and wontfix >= 10:
-        print(
-            colorize(
-                f"  ⚠ {gap:.1f}-point gap between overall and strict — "
-                f"{wontfix} wontfix items represent hidden debt",
-                "yellow",
-            )
-        )
+    _print_wontfix_gap(stats.get("wontfix", 0), gap)
+    _print_score_legend(state, gap)
 
-    # Score legend — shown on first scan or when strict gap is significant
-    scan_count = state.get("scan_count", 0)
-    if scan_count <= 1 or gap > 10 or is_agent_environment():
-        _print_score_guide()
-
-    # Show strict target progress
     if target_strict is not None and new.strict is not None:
         print_strict_target_nudge(new.strict, target_strict, show_next=False)
 
-    integrity = state.get("subjective_integrity", {})
-    if isinstance(integrity, dict):
-        _print_subjective_integrity_warning(state, integrity)
+    _print_integrity_warnings(state)
 
 
 def show_concern_count(state: StateModel, lang_name: str | None = None) -> None:

@@ -9,7 +9,7 @@ import urllib.request
 from desloppify.base.output.terminal import colorize
 from desloppify.base.discovery.path_io import safe_write_text
 from desloppify.base.discovery.paths import get_project_root
-from desloppify.base.skill_docs import (
+from desloppify.app.skill_docs import (
     SKILL_BEGIN,
     SKILL_END,
     SKILL_TARGETS,

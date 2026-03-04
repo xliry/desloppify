@@ -10,7 +10,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from desloppify.base.config import target_strict_score_from_config
+from desloppify.base.config import (
+    DEFAULT_TARGET_STRICT_SCORE,
+    target_strict_score_from_config,
+)
 from desloppify.base.exception_sets import PLAN_LOAD_EXCEPTIONS
 from desloppify.engine import plan as plan_mod
 from desloppify.engine._plan.subjective_policy import (
@@ -69,9 +72,9 @@ def queue_context(
     if target_strict is not None:
         resolved_target = target_strict
     elif config is not None:
-        resolved_target = target_strict_score_from_config(config, fallback=95.0)
+        resolved_target = target_strict_score_from_config(config)
     else:
-        resolved_target = 95.0
+        resolved_target = DEFAULT_TARGET_STRICT_SCORE
 
     # --- resolve policy ---
     resolved_policy = compute_subjective_visibility(

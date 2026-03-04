@@ -14,7 +14,7 @@ from desloppify import state as state_mod
 from desloppify.app.commands.helpers.display import short_issue_id
 from desloppify.app.commands.helpers.query import write_query
 from desloppify.app.commands.helpers.queue_progress import show_score_with_plan_context
-from desloppify.app.commands.helpers.score import target_strict_score_from_config
+from desloppify.base.config import target_strict_score_from_config
 from desloppify.app.commands.scan.reporting import (
     dimensions as reporting_dimensions_mod,
 )

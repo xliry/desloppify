@@ -325,7 +325,7 @@ def print_review_import_scores_and_integrity(
     colorize_fn,
 ) -> list[dict[str, Any]]:
     """Print subjective integrity warnings (score line handled by print_score_update)."""
-    target_strict = target_strict_score_from_config_fn(config, fallback=95.0)
+    target_strict = target_strict_score_from_config_fn(config)
     at_target = subjective_at_target_fn(
         state,
         state.get("dimension_scores", {}),

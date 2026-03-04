@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from desloppify.base.config import DEFAULT_TARGET_STRICT_SCORE
 from desloppify.base.registry import DETECTORS
 from desloppify.engine._state.filtering import issue_in_scan_scope
 from desloppify.engine._state.schema import StateModel
@@ -82,7 +83,7 @@ _SCAN_PATH_FROM_STATE_POLICY = object()
 def compute_subjective_visibility(
     state: StateModel,
     *,
-    target_strict: float = 95.0,
+    target_strict: float = DEFAULT_TARGET_STRICT_SCORE,
     scan_path: str | None | object = _SCAN_PATH_FROM_STATE_POLICY,
     plan: dict | None = None,
 ) -> SubjectiveVisibility:

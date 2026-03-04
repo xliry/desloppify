@@ -7,7 +7,6 @@ from pathlib import Path
 
 from desloppify.app.commands._fix_preview import show_fix_dry_run_samples
 from desloppify.base.output.terminal import colorize
-from desloppify.languages._framework.base.types import FixResult
 
 from .apply_flow import (
     _apply_and_report,
@@ -36,12 +35,8 @@ def cmd_fix(args: argparse.Namespace) -> None:
         return
 
     raw = fixer.fix(entries, dry_run=dry_run)
-    if isinstance(raw, FixResult):
-        results = raw.entries
-        skip_reasons = raw.skip_reasons
-    else:
-        results = raw
-        skip_reasons = {}
+    results = raw.entries
+    skip_reasons = raw.skip_reasons
     total_items = sum(len(r["removed"]) for r in results)
     total_lines = sum(r.get("lines_removed", 0) for r in results)
     _print_fix_summary(fixer, results, total_items, total_lines, dry_run)

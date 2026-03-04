@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from desloppify import state as state_mod
-from desloppify.app.commands.helpers.score import target_strict_score_from_config
+from desloppify.base.config import target_strict_score_from_config
 from desloppify.base import config as config_mod
 from desloppify.base.output.terminal import colorize
 
@@ -59,7 +59,7 @@ def print_score_update(
     if config is None:
         config = config_mod.load_config()
 
-    target = target_strict_score_from_config(config, fallback=95.0)
+    target = target_strict_score_from_config(config)
     print_strict_target_nudge(new.strict, target)
 
 

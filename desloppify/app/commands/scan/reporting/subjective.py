@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from desloppify.app.commands.helpers.score import coerce_target_score
+from desloppify.base.config import DEFAULT_TARGET_STRICT_SCORE, coerce_target_score
 from desloppify.engine._scoring.subjective.core import DISPLAY_NAMES
 from desloppify.intelligence import integrity as subjective_integrity_mod
 
@@ -215,10 +215,10 @@ def subjective_integrity_followup(
     state: dict,
     subjective_entries: list[dict],
     *,
-    threshold: float = 95.0,
+    threshold: float = DEFAULT_TARGET_STRICT_SCORE,
     max_items: int = 5,
 ) -> dict[str, object] | None:
-    threshold_value = coerce_target_score(threshold, fallback=95.0)
+    threshold_value = coerce_target_score(threshold)
     raw_integrity_state = state.get("subjective_integrity")
     integrity_state: dict[str, object] = (
         raw_integrity_state if isinstance(raw_integrity_state, dict) else {}
@@ -260,7 +260,7 @@ def subjective_integrity_followup(
 def subjective_integrity_notice_lines(
     integrity_notice: dict[str, object] | None,
     *,
-    fallback_target: float = 95.0,
+    fallback_target: float = DEFAULT_TARGET_STRICT_SCORE,
 ) -> list[tuple[str, str]]:
     if not integrity_notice:
         return []
@@ -323,11 +323,11 @@ def build_subjective_followup(
     state: dict,
     subjective_entries: list[dict],
     *,
-    threshold: float = 95.0,
+    threshold: float = DEFAULT_TARGET_STRICT_SCORE,
     max_quality_items: int = 3,
     max_integrity_items: int = 5,
 ) -> SubjectiveFollowup:
-    threshold_value = coerce_target_score(threshold, fallback=95.0)
+    threshold_value = coerce_target_score(threshold)
     threshold_label = f"{threshold_value:.1f}".rstrip("0").rstrip(".")
     low_assessed = sorted(
         [
@@ -370,9 +370,9 @@ def show_subjective_paths(
     *,
     colorize_fn,
     scorecard_subjective_entries_fn,
-    threshold: float = 95.0,
+    threshold: float = DEFAULT_TARGET_STRICT_SCORE,
 ) -> None:
-    threshold_value = coerce_target_score(threshold, fallback=95.0)
+    threshold_value = coerce_target_score(threshold)
     subjective_entries = scorecard_subjective_entries_fn(state, dim_scores=dim_scores)
     if not subjective_entries:
         return

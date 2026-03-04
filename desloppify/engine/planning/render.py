@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import date
 
+from desloppify.base.config import DEFAULT_TARGET_STRICT_SCORE
 from desloppify.base.exception_sets import PLAN_LOAD_EXCEPTIONS
 from desloppify.base.output.terminal import LOC_COMPACT_THRESHOLD
 from desloppify.base.registry import dimension_action_type
@@ -194,14 +195,16 @@ def _plan_item_sections(issues: dict, *, state: PlanState | None = None) -> list
 
     queue_state: PlanState | dict = state or {"issues": issues}
     raw_target = (
-        (state or {}).get("config", {}).get("target_strict_score", 95)
+        (state or {}).get("config", {}).get(
+            "target_strict_score", DEFAULT_TARGET_STRICT_SCORE
+        )
         if isinstance(state, dict)
-        else 95
+        else DEFAULT_TARGET_STRICT_SCORE
     )
     try:
         subjective_threshold = float(raw_target)
     except (TypeError, ValueError):
-        subjective_threshold = 95.0
+        subjective_threshold = DEFAULT_TARGET_STRICT_SCORE
     subjective_threshold = max(0.0, min(100.0, subjective_threshold))
     if "issues" not in queue_state:
         queue_state = {**queue_state, "issues": issues}

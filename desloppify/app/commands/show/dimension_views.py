@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from desloppify.app.commands.helpers.query import write_query
-from desloppify.app.commands.helpers.score import target_strict_score_from_config
+from desloppify.base.config import target_strict_score_from_config
 from desloppify.base.output.terminal import colorize
 
 from .render import show_subjective_followup
@@ -60,7 +60,7 @@ def _render_subjective_dimension(
         )
     show_subjective_followup(
         state,
-        target_strict_score_from_config(config, fallback=95.0),
+        target_strict_score_from_config(config),
     )
 
 
@@ -115,7 +115,7 @@ def _render_no_matches(entity, pattern, status_filter, narrative, state, config)
     if entity.kind == "special_view":
         show_subjective_followup(
             state,
-            target_strict_score_from_config(config, fallback=95.0),
+            target_strict_score_from_config(config),
         )
     else:
         hint = _detector_names_hint()

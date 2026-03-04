@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from desloppify import state as state_mod
+from desloppify.base.config import DEFAULT_TARGET_STRICT_SCORE
 from desloppify.base.output.terminal import colorize
 from desloppify.engine._state.schema import StateModel
 from desloppify.engine.plan import has_living_plan, load_plan
@@ -94,7 +95,7 @@ def show_post_scan_analysis(
     state: StateModel,
     lang,
     *,
-    target_strict_score: float = 95.0,
+    target_strict_score: float = DEFAULT_TARGET_STRICT_SCORE,
 ) -> tuple[list[str], dict[str, Any]]:
     """Print critical warnings + headline + pointers. Returns (warnings, narrative)."""
     warnings = _post_scan_warnings(diff, state, lang)
