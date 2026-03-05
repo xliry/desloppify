@@ -17,8 +17,8 @@ generic_lang(
         },
         {
             "label": "cargo check",
-            "cmd": "cargo check 2>&1",
-            "fmt": "gnu",
+            "cmd": "cargo check --message-format=json 2>&1",
+            "fmt": "cargo",
             "id": "cargo_error",
             "tier": 3,
             "fix_cmd": None,
