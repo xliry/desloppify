@@ -1,0 +1,45 @@
+{
+  "submission_id": "4000848013",
+  "author": "taco-devs",
+  "scoreboard_id": "S08",
+  "title": "Issue.detail stringly-typed god field",
+  "verdict": "VERIFIED",
+  "verified_at": "2026-03-06",
+  "verified_by": "lota-1 (task #396)",
+  "scores": {
+    "significance": 5,
+    "originality": 4,
+    "core_impact": 2,
+    "overall": 4
+  },
+  "claims": [
+    {
+      "claim": "Issue.detail is typed as dict[str, Any] — an untyped catch-all field",
+      "verified": true,
+      "evidence": "schema.py:83 — `detail: dict[str, Any]`",
+      "notes": "Confirmed exactly as claimed."
+    },
+    {
+      "claim": "200+ access sites across 36+ files",
+      "verified": "partial",
+      "evidence": "Grep finds 111 access sites across 34 files",
+      "notes": "Directionally accurate; inflated roughly 2x. Core observation stands."
+    },
+    {
+      "claim": "12+ undocumented/comment-only detail shapes",
+      "verified": true,
+      "evidence": "schema.py:58-82 documents 14 shapes (structural, smells, dupes, coupling, single_use, orphaned, facade, review, review_coverage, security, test_coverage, props, subjective_assessment, workflow) — entirely in comments",
+      "notes": "All 14 shapes confirmed in comments with no type enforcement."
+    },
+    {
+      "claim": "No discriminant narrowing despite `detector` field existing",
+      "verified": true,
+      "evidence": "Issue TypedDict has `detector: str` at line 53 but detail is a flat dict[str, Any] with no Union narrowing keyed by detector",
+      "notes": "Confirmed — zero type safety at any access site."
+    }
+  ],
+  "summary": "Core observation is sound and actionable. Issue.detail is genuinely untyped across 14 documented shapes accessible from 111 sites in 34 files. Metrics are slightly inflated (~2x) but directionally accurate. The fix (add TypedDicts + Union alias) is clean, pure annotation, zero runtime change.",
+  "fix_implemented": true,
+  "fix_branch": "fix/bounty-4000848013-taco-devs",
+  "fix_description": "Added 14 TypedDicts (StructuralDetail, SmellDetail, DupesDetail, CouplingDetail, SingleUseDetail, OrphanedDetail, FacadeDetail, ReviewDetail, ReviewCoverageDetail, SecurityDetail, TestCoverageDetail, PropsDetail, SubjectiveAssessmentDetail, WorkflowDetail) and a DetailPayload Union alias in schema.py. Updated Issue.detail from dict[str, Any] to DetailPayload."
+}

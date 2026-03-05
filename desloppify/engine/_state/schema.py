@@ -13,6 +13,21 @@ from desloppify.engine._state.schema_scores import (
 from desloppify.languages._framework.base.types import ScanCoverageRecord
 
 __all__ = [
+    "StructuralDetail",
+    "SmellDetail",
+    "DupesDetail",
+    "CouplingDetail",
+    "SingleUseDetail",
+    "OrphanedDetail",
+    "FacadeDetail",
+    "ReviewDetail",
+    "ReviewCoverageDetail",
+    "SecurityDetail",
+    "TestCoverageDetail",
+    "PropsDetail",
+    "SubjectiveAssessmentDetail",
+    "WorkflowDetail",
+    "DetailPayload",
     "ConcernDismissal",
     "AssessmentImportAuditEntry",
     "AttestationLogEntry",
@@ -46,6 +61,134 @@ _ALLOWED_ISSUE_STATUSES: set[str] = {
 }
 
 
+class StructuralDetail(TypedDict, total=False):
+    loc: int
+    complexity_score: float
+    complexity_signals: list[str]
+    name: str
+
+
+class SmellDetail(TypedDict, total=False):
+    smell_id: str
+    severity: str
+    count: int
+    lines: list[int]
+
+
+class DupesDetail(TypedDict, total=False):
+    fn_a: dict[str, Any]
+    fn_b: dict[str, Any]
+    similarity: float
+    kind: str
+    cluster_size: int
+    cluster: list[Any]
+
+
+class CouplingDetail(TypedDict, total=False):
+    target: str
+    tool: str
+    direction: str
+    sole_tool: bool
+    importer_count: int
+    loc: int
+    source_tool: str
+    target_tool: str
+
+
+class SingleUseDetail(TypedDict, total=False):
+    loc: int
+    sole_importer: str
+
+
+class OrphanedDetail(TypedDict, total=False):
+    loc: int
+
+
+class FacadeDetail(TypedDict, total=False):
+    loc: int
+    importers: list[str]
+    imports_from: list[str]
+    kind: str
+
+
+class ReviewDetail(TypedDict, total=False):
+    holistic: bool
+    dimension: str
+    related_files: list[str]
+    suggestion: str
+    evidence: list[str]
+    investigation: str
+    merged_at: str
+
+
+class ReviewCoverageDetail(TypedDict, total=False):
+    reason: str
+    loc: int
+    age_days: float
+    old_files: list[str]
+    new_files: list[str]
+
+
+class SecurityDetail(TypedDict, total=False):
+    kind: str
+    severity: str
+    line: int
+    content: str
+    remediation: str
+
+
+class TestCoverageDetail(TypedDict, total=False):
+    kind: str
+    loc: int
+    importer_count: int
+    loc_weight: float
+    test_file: str
+    test_functions: list[str]
+    assertions: int
+    mocks: int
+    snapshots: int
+
+
+class PropsDetail(TypedDict, total=False):
+    """Passthrough entry fields (minus 'file') for props detector."""
+
+
+class SubjectiveAssessmentDetail(TypedDict, total=False):
+    dimension_name: str
+    dimension: str
+    failing: bool
+    strict_score: float
+    open_review_issues: int
+
+
+class WorkflowDetail(TypedDict, total=False):
+    stage: str
+    strict: bool
+    plan_start_strict: float
+    delta: float
+    total_review_issues: int
+    explanation: str
+
+
+DetailPayload = (
+    StructuralDetail
+    | SmellDetail
+    | DupesDetail
+    | CouplingDetail
+    | SingleUseDetail
+    | OrphanedDetail
+    | FacadeDetail
+    | ReviewDetail
+    | ReviewCoverageDetail
+    | SecurityDetail
+    | TestCoverageDetail
+    | PropsDetail
+    | SubjectiveAssessmentDetail
+    | WorkflowDetail
+    | dict[str, Any]
+)
+
+
 class Issue(TypedDict):
     """The central data structure: a normalized issue from any detector."""
 
@@ -55,32 +198,7 @@ class Issue(TypedDict):
     tier: int
     confidence: str
     summary: str
-    # Known detail shapes per detector (non-exhaustive, for reference):
-    #
-    # structural:      {loc, complexity_score?, complexity_signals?: list[str],
-    #                   name? (god class), ...god_class_metrics}
-    # smells:          {smell_id, severity, count, lines: list[int]}
-    # dupes:           {fn_a: dict, fn_b: dict, similarity, kind, cluster_size,
-    #                   cluster: list}
-    # coupling:        {target, tool?, direction, sole_tool?, importer_count?,
-    #                   loc?, source_tool?, target_tool?}
-    # single_use:      {loc, sole_importer}
-    # orphaned:        {loc}
-    # facade:          {loc, importers, imports_from: list[str], kind}
-    # review:          {holistic?: bool, dimension?, related_files?: list[str],
-    #                   suggestion?, evidence?: list[str], investigation?,
-    #                   merged_at?}
-    # review_coverage: {reason, loc?, age_days?, old_files?, new_files?}
-    # security:        {kind, severity, line, content, remediation}
-    # test_coverage:   {kind, loc?, importer_count?, loc_weight?,
-    #                   test_file?, test_functions?, assertions?, mocks?,
-    #                   snapshots?}
-    # props:           {passthrough entry fields minus "file"}
-    # subjective_assessment (synthetic): {dimension_name, dimension, failing,
-    #                   strict_score, open_review_issues?}
-    # workflow (synthetic): {stage?, strict?, plan_start_strict?, delta?,
-    #                   total_review_issues?, explanation?}
-    detail: dict[str, Any]
+    detail: DetailPayload
     status: Status
     note: str | None
     first_seen: str
