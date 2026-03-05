@@ -14,7 +14,7 @@ def _make_state(
 ) -> dict:
     """Build a minimal state dict with embedded scores."""
     return {
-        "findings": {},
+        "issues": {},
         "stats": {},
         "overall_score": overall,
         "objective_score": objective,
@@ -55,7 +55,7 @@ def test_print_score_update_shows_negative_delta(capsys: object) -> None:
 
 
 def test_print_score_update_unavailable_scores(capsys: object) -> None:
-    state = {"findings": {}, "stats": {}}
+    state = {"issues": {}, "stats": {}}
     prev = ScoreSnapshot(overall=None, objective=None, strict=None, verified=None)
     print_score_update(state, prev)
     out = capsys.readouterr().out  # type: ignore[attr-defined]

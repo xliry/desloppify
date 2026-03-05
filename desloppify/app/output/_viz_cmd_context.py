@@ -8,7 +8,7 @@ from pathlib import Path
 from desloppify import state as state_module
 from desloppify.app.commands.helpers.lang import resolve_lang
 from desloppify.app.commands.helpers.runtime import command_runtime
-from desloppify.core.fallbacks import warn_best_effort
+from desloppify.base.output.fallbacks import warn_best_effort
 
 
 def load_cmd_context(args: object) -> tuple[Path, object | None, dict | None]:
@@ -24,7 +24,7 @@ def load_cmd_context(args: object) -> tuple[Path, object | None, dict | None]:
             warn_best_effort(
                 "Could not load scan state for visualization "
                 f"({scan_state_path}, {exc.__class__.__name__}: {exc}); "
-                "rendering without finding overlays."
+                "rendering without issue overlays."
             )
             state = None
     return Path(args.path), lang, state

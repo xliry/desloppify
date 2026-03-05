@@ -20,7 +20,7 @@ from desloppify.app.output.scorecard_parts.meta import (
     resolve_package_version,
     resolve_project_name,
 )
-from desloppify.core._internal.text_utils import PROJECT_ROOT
+from desloppify.base.discovery.paths import get_project_root
 
 # ===========================================================================
 # score_color
@@ -111,7 +111,7 @@ class TestScaleHelper:
 # ===========================================================================
 
 class TestIgnoreWarning:
-    def test_none_when_no_ignored_findings(self):
+    def test_none_when_no_ignored_issues(self):
         assert _scorecard_ignore_warning({"ignore_integrity": {"ignored": 0, "suppressed_pct": 80.0}}) is None
 
     def test_warning_when_suppression_medium(self):
@@ -254,7 +254,7 @@ class TestGetProjectName:
             if "gh" in cmd
             else (_ for _ in ()).throw(FileNotFoundError),
         )
-        assert resolve_project_name(PROJECT_ROOT) == "owner/repo"
+        assert resolve_project_name(get_project_root()) == "owner/repo"
 
     def test_falls_back_to_git_remote_ssh(self, monkeypatch):
         import desloppify.app.output.scorecard_parts.meta as meta
@@ -265,7 +265,7 @@ class TestGetProjectName:
             return "git@github.com:myuser/myrepo.git\n"
 
         monkeypatch.setattr(meta.subprocess, "check_output", mock_check_output)
-        assert resolve_project_name(PROJECT_ROOT) == "myuser/myrepo"
+        assert resolve_project_name(get_project_root()) == "myuser/myrepo"
 
     def test_falls_back_to_git_remote_https(self, monkeypatch):
         import desloppify.app.output.scorecard_parts.meta as meta
@@ -276,7 +276,7 @@ class TestGetProjectName:
             return "https://github.com/owner/repo.git\n"
 
         monkeypatch.setattr(meta.subprocess, "check_output", mock_check_output)
-        assert resolve_project_name(PROJECT_ROOT) == "owner/repo"
+        assert resolve_project_name(get_project_root()) == "owner/repo"
 
     def test_falls_back_to_directory_name(self, monkeypatch):
         import desloppify.app.output.scorecard_parts.meta as meta
@@ -284,7 +284,7 @@ class TestGetProjectName:
         monkeypatch.setattr(
             meta.subprocess, "check_output", lambda cmd, **kw: (_ for _ in ()).throw(FileNotFoundError)
         )
-        result = resolve_project_name(PROJECT_ROOT)
+        result = resolve_project_name(get_project_root())
         assert isinstance(result, str)
         assert len(result) > 0
 
@@ -297,7 +297,7 @@ class TestGetProjectName:
             return "https://TOKEN@github.com/owner/repo.git\n"
 
         monkeypatch.setattr(meta.subprocess, "check_output", mock_check_output)
-        assert resolve_project_name(PROJECT_ROOT) == "owner/repo"
+        assert resolve_project_name(get_project_root()) == "owner/repo"
 
 
 # ===========================================================================
@@ -310,7 +310,7 @@ class TestGetPackageVersion:
         from importlib.metadata import PackageNotFoundError
 
         result = resolve_package_version(
-            PROJECT_ROOT,
+            get_project_root(),
             version_getter=lambda name: "0.6.0",
             package_not_found_error=PackageNotFoundError,
         )
@@ -346,11 +346,11 @@ def _mk_dim(
     *,
     strict: float | None = None,
     checks: int = 10,
-    issues: int = 0,
+    failing: int = 0,
     subjective: bool = True,
 ) -> dict:
     detectors = (
-        {"subjective_assessment": {"issues": issues}}
+        {"subjective_assessment": {"failing": failing}}
         if subjective
         else {"structural": {}}
     )
@@ -358,7 +358,7 @@ def _mk_dim(
         "score": score,
         "strict": score if strict is None else strict,
         "checks": checks,
-        "issues": issues,
+        "failing": failing,
         "tier": 4 if subjective else 3,
         "detectors": detectors,
     }
@@ -377,9 +377,9 @@ class TestScorecardDimensionPolicy:
     def test_collapse_elegance_dimensions_averages_components(self):
         dims = [
             ("Naming quality", _mk_dim(90, strict=90)),
-            ("High elegance", _mk_dim(80, strict=70, issues=1)),
-            ("Mid elegance", _mk_dim(60, strict=50, issues=2)),
-            ("Low elegance", _mk_dim(100, strict=90, issues=0)),
+            ("High elegance", _mk_dim(80, strict=70, failing=1)),
+            ("Mid elegance", _mk_dim(60, strict=50, failing=2)),
+            ("Low elegance", _mk_dim(100, strict=90, failing=0)),
         ]
         collapsed = collapse_elegance_dimensions(dims, lang_key="python")
         names = [name for name, _ in collapsed]
@@ -390,7 +390,7 @@ class TestScorecardDimensionPolicy:
         combined = dict(collapsed)["Elegance"]
         assert combined["score"] == 80.0
         assert combined["strict"] == 70.0
-        assert combined["issues"] == 3
+        assert combined["failing"] == 3
 
     def test_limit_scorecard_dimensions_python_drops_highest_score_extra(self):
         """When budget forces truncation, extras are sorted ascending by score

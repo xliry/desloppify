@@ -4,30 +4,34 @@ from __future__ import annotations
 
 import pytest
 
-from desloppify.scoring import (
+from desloppify.engine._scoring.detection import (
+    detector_pass_rate,
+    merge_potentials,
+)
+from desloppify.engine._scoring.policy.core import (
     CONFIDENCE_WEIGHTS,
     DIMENSIONS,
-    DISPLAY_NAMES,
     MIN_SAMPLE,
     SUBJECTIVE_CHECKS,
     TIER_WEIGHTS,
     Dimension,
+)
+from desloppify.engine._scoring.results.core import (
     compute_dimension_scores,
     compute_health_breakdown,
     compute_health_score,
     compute_score_bundle,
     compute_score_impact,
-    detector_pass_rate,
     get_dimension_for_detector,
-    merge_potentials,
 )
+from desloppify.engine._scoring.subjective.core import DISPLAY_NAMES
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _finding(
+def _issue(
     detector: str,
     *,
     status: str = "open",
@@ -35,7 +39,7 @@ def _finding(
     file: str = "a.py",
     zone: str = "production",
 ) -> dict:
-    """Build a minimal finding dict."""
+    """Build a minimal issue dict."""
     return {
         "detector": detector,
         "status": status,
@@ -45,9 +49,9 @@ def _finding(
     }
 
 
-def _findings_dict(*findings: dict) -> dict:
-    """Wrap a list of finding dicts into an id-keyed dict."""
-    return {str(i): f for i, f in enumerate(findings)}
+def _issues_dict(*issues: dict) -> dict:
+    """Wrap a list of issue dicts into an id-keyed dict."""
+    return {str(i): f for i, f in enumerate(issues)}
 
 
 # ===================================================================
@@ -97,8 +101,8 @@ class TestMergePotentials:
 
 class TestDetectorPassRate:
     def test_zero_potential_returns_perfect(self):
-        findings = _findings_dict(_finding("unused"))
-        rate, issues, weighted = detector_pass_rate("unused", findings, 0)
+        issues = _issues_dict(_issue("unused"))
+        rate, issues, weighted = detector_pass_rate("unused", issues, 0)
         assert rate == 1.0
         assert issues == 0
         assert weighted == 0.0
@@ -109,117 +113,117 @@ class TestDetectorPassRate:
         assert issues == 0
         assert weighted == 0.0
 
-    def test_all_passing_no_findings(self):
+    def test_all_passing_no_issues(self):
         rate, issues, weighted = detector_pass_rate("unused", {}, 100)
         assert rate == 1.0
         assert issues == 0
         assert weighted == 0.0
 
-    def test_all_passing_only_resolved_findings(self):
-        findings = _findings_dict(
-            _finding("unused", status="resolved"),
-            _finding("unused", status="resolved"),
+    def test_all_passing_only_resolved_issues(self):
+        issues = _issues_dict(
+            _issue("unused", status="resolved"),
+            _issue("unused", status="resolved"),
         )
-        rate, issues, weighted = detector_pass_rate("unused", findings, 50)
+        rate, issues, weighted = detector_pass_rate("unused", issues, 50)
         assert rate == 1.0
         assert issues == 0
         assert weighted == 0.0
 
     def test_some_failures_high_confidence(self):
-        findings = _findings_dict(
-            _finding("unused", status="open", confidence="high"),
-            _finding("unused", status="open", confidence="high"),
+        issues = _issues_dict(
+            _issue("unused", status="open", confidence="high"),
+            _issue("unused", status="open", confidence="high"),
         )
         # potential=10, 2 open high-confidence -> weighted_failures=2.0
-        rate, issues, weighted = detector_pass_rate("unused", findings, 10)
+        rate, issues, weighted = detector_pass_rate("unused", issues, 10)
         assert issues == 2
         assert weighted == 2.0
         assert rate == pytest.approx(8.0 / 10.0)
 
     def test_some_failures_medium_confidence(self):
-        findings = _findings_dict(
-            _finding("unused", status="open", confidence="medium"),
+        issues = _issues_dict(
+            _issue("unused", status="open", confidence="medium"),
         )
         # potential=10, 1 open medium -> weighted_failures=0.7
-        rate, issues, weighted = detector_pass_rate("unused", findings, 10)
+        rate, issues, weighted = detector_pass_rate("unused", issues, 10)
         assert issues == 1
         assert weighted == pytest.approx(0.7)
         assert rate == pytest.approx(9.3 / 10.0)
 
     def test_some_failures_low_confidence(self):
-        findings = _findings_dict(
-            _finding("unused", status="open", confidence="low"),
+        issues = _issues_dict(
+            _issue("unused", status="open", confidence="low"),
         )
         # potential=10, 1 open low -> weighted_failures=0.3
-        rate, issues, weighted = detector_pass_rate("unused", findings, 10)
+        rate, issues, weighted = detector_pass_rate("unused", issues, 10)
         assert issues == 1
         assert weighted == pytest.approx(0.3)
         assert rate == pytest.approx(9.7 / 10.0)
 
     def test_mixed_confidence(self):
-        findings = _findings_dict(
-            _finding("unused", status="open", confidence="high"),
-            _finding("unused", status="open", confidence="medium"),
-            _finding("unused", status="open", confidence="low"),
+        issues = _issues_dict(
+            _issue("unused", status="open", confidence="high"),
+            _issue("unused", status="open", confidence="medium"),
+            _issue("unused", status="open", confidence="low"),
         )
         # weighted = 1.0 + 0.7 + 0.3 = 2.0
-        rate, issues, weighted = detector_pass_rate("unused", findings, 10)
+        rate, issues, weighted = detector_pass_rate("unused", issues, 10)
         assert issues == 3
         assert weighted == pytest.approx(2.0)
         assert rate == pytest.approx(8.0 / 10.0)
 
     def test_filters_by_detector(self):
-        findings = _findings_dict(
-            _finding("unused", status="open", confidence="high"),
-            _finding("logs", status="open", confidence="high"),
+        issues = _issues_dict(
+            _issue("unused", status="open", confidence="high"),
+            _issue("logs", status="open", confidence="high"),
         )
-        rate, issues, weighted = detector_pass_rate("unused", findings, 10)
+        rate, issues, weighted = detector_pass_rate("unused", issues, 10)
         assert issues == 1
         assert weighted == 1.0
 
     def test_excludes_non_production_zones(self):
-        findings = _findings_dict(
-            _finding("unused", status="open", zone="production"),
-            _finding("unused", status="open", zone="test"),
-            _finding("unused", status="open", zone="config"),
-            _finding("unused", status="open", zone="generated"),
-            _finding("unused", status="open", zone="vendor"),
+        issues = _issues_dict(
+            _issue("unused", status="open", zone="production"),
+            _issue("unused", status="open", zone="test"),
+            _issue("unused", status="open", zone="config"),
+            _issue("unused", status="open", zone="generated"),
+            _issue("unused", status="open", zone="vendor"),
         )
         # Only the production one counts
-        rate, issues, weighted = detector_pass_rate("unused", findings, 10)
+        rate, issues, weighted = detector_pass_rate("unused", issues, 10)
         assert issues == 1
         assert weighted == 1.0
 
     def test_script_zone_not_excluded(self):
         """Script zone is NOT in EXCLUDED_ZONES, so it should count."""
-        findings = _findings_dict(
-            _finding("unused", status="open", zone="script"),
+        issues = _issues_dict(
+            _issue("unused", status="open", zone="script"),
         )
-        rate, issues, weighted = detector_pass_rate("unused", findings, 10)
+        rate, issues, weighted = detector_pass_rate("unused", issues, 10)
         assert issues == 1
         assert weighted == 1.0
 
     # -- strict mode --
 
     def test_lenient_mode_ignores_wontfix(self):
-        findings = _findings_dict(
-            _finding("unused", status="open"),
-            _finding("unused", status="wontfix"),
+        issues = _issues_dict(
+            _issue("unused", status="open"),
+            _issue("unused", status="wontfix"),
         )
         rate, issues, weighted = detector_pass_rate(
-            "unused", findings, 10, strict=False
+            "unused", issues, 10, strict=False
         )
         # Only "open" counts in lenient mode
         assert issues == 1
         assert weighted == 1.0
 
     def test_strict_mode_counts_wontfix(self):
-        findings = _findings_dict(
-            _finding("unused", status="open"),
-            _finding("unused", status="wontfix"),
+        issues = _issues_dict(
+            _issue("unused", status="open"),
+            _issue("unused", status="wontfix"),
         )
         rate, issues, weighted = detector_pass_rate(
-            "unused", findings, 10, strict=True
+            "unused", issues, 10, strict=True
         )
         # Both "open" and "wontfix" count in strict mode
         assert issues == 2
@@ -230,108 +234,108 @@ class TestDetectorPassRate:
 
     def test_file_based_detector_uses_tiered_per_file_cap(self):
         """For 'smells', heavy same-file concentration lifts the per-file cap."""
-        findings = _findings_dict(
-            _finding("smells", status="open", confidence="high", file="a.py"),
-            _finding("smells", status="open", confidence="high", file="a.py"),
-            _finding("smells", status="open", confidence="high", file="a.py"),
+        issues = _issues_dict(
+            _issue("smells", status="open", confidence="high", file="a.py"),
+            _issue("smells", status="open", confidence="high", file="a.py"),
+            _issue("smells", status="open", confidence="high", file="a.py"),
         )
-        # 3 findings in one file => tier cap 1.5
-        rate, issues, weighted = detector_pass_rate("smells", findings, 10)
+        # 3 issues in one file => tier cap 1.5
+        rate, issues, weighted = detector_pass_rate("smells", issues, 10)
         assert issues == 3
         assert weighted == pytest.approx(1.5)
         assert rate == pytest.approx(8.5 / 10.0)
 
     def test_file_based_detector_multiple_files(self):
         """Smells across two files: each file still caps independently."""
-        findings = _findings_dict(
-            _finding("smells", status="open", confidence="high", file="a.py"),
-            _finding("smells", status="open", confidence="high", file="a.py"),
-            _finding("smells", status="open", confidence="high", file="b.py"),
+        issues = _issues_dict(
+            _issue("smells", status="open", confidence="high", file="a.py"),
+            _issue("smells", status="open", confidence="high", file="a.py"),
+            _issue("smells", status="open", confidence="high", file="b.py"),
         )
-        # file a.py: 2 findings => cap 1.0; file b.py: 1 finding => cap 1.0
-        rate, issues, weighted = detector_pass_rate("smells", findings, 10)
+        # file a.py: 2 issues => cap 1.0; file b.py: 1 issue => cap 1.0
+        rate, issues, weighted = detector_pass_rate("smells", issues, 10)
         assert issues == 3
         assert weighted == 2.0
         assert rate == pytest.approx(8.0 / 10.0)
 
     def test_file_based_low_confidence_no_cap_needed(self):
         """Low confidence per file doesn't exceed 1.0, no capping needed."""
-        findings = _findings_dict(
-            _finding("smells", status="open", confidence="low", file="a.py"),
-            _finding("smells", status="open", confidence="low", file="a.py"),
+        issues = _issues_dict(
+            _issue("smells", status="open", confidence="low", file="a.py"),
+            _issue("smells", status="open", confidence="low", file="a.py"),
         )
         # raw per-file weight = 0.3 + 0.3 = 0.6, below cap
-        rate, issues, weighted = detector_pass_rate("smells", findings, 10)
+        rate, issues, weighted = detector_pass_rate("smells", issues, 10)
         assert issues == 2
         assert weighted == pytest.approx(0.6)
 
     def test_file_based_high_count_uses_highest_tier_cap(self):
-        """6+ findings in one file are capped at 2.0 (not 1.0)."""
-        findings = _findings_dict(
-            _finding("smells", status="open", confidence="high", file="a.py"),
-            _finding("smells", status="open", confidence="high", file="a.py"),
-            _finding("smells", status="open", confidence="high", file="a.py"),
-            _finding("smells", status="open", confidence="high", file="a.py"),
-            _finding("smells", status="open", confidence="high", file="a.py"),
-            _finding("smells", status="open", confidence="high", file="a.py"),
+        """6+ issues in one file are capped at 2.0 (not 1.0)."""
+        issues = _issues_dict(
+            _issue("smells", status="open", confidence="high", file="a.py"),
+            _issue("smells", status="open", confidence="high", file="a.py"),
+            _issue("smells", status="open", confidence="high", file="a.py"),
+            _issue("smells", status="open", confidence="high", file="a.py"),
+            _issue("smells", status="open", confidence="high", file="a.py"),
+            _issue("smells", status="open", confidence="high", file="a.py"),
         )
-        rate, issues, weighted = detector_pass_rate("smells", findings, 10)
+        rate, issues, weighted = detector_pass_rate("smells", issues, 10)
         assert issues == 6
         assert weighted == pytest.approx(2.0)
         assert rate == pytest.approx(8.0 / 10.0)
 
     def test_file_based_tiered_cap_respects_confidence_weights(self):
         """Tiering raises the cap, but low-confidence raw weight still applies."""
-        findings = _findings_dict(
-            _finding("smells", status="open", confidence="low", file="a.py"),
-            _finding("smells", status="open", confidence="low", file="a.py"),
-            _finding("smells", status="open", confidence="low", file="a.py"),
+        issues = _issues_dict(
+            _issue("smells", status="open", confidence="low", file="a.py"),
+            _issue("smells", status="open", confidence="low", file="a.py"),
+            _issue("smells", status="open", confidence="low", file="a.py"),
         )
-        # 3 low-confidence findings => raw 0.9, tier cap 1.5 => 0.9 retained.
-        rate, issues, weighted = detector_pass_rate("smells", findings, 10)
+        # 3 low-confidence issues => raw 0.9, tier cap 1.5 => 0.9 retained.
+        rate, issues, weighted = detector_pass_rate("smells", issues, 10)
         assert issues == 3
         assert weighted == pytest.approx(0.9)
         assert rate == pytest.approx(9.1 / 10.0)
 
     def test_dict_keys_is_file_based(self):
         """dict_keys detector should also use file-based tiered capping."""
-        findings = _findings_dict(
-            _finding("dict_keys", status="open", confidence="high", file="a.py"),
-            _finding("dict_keys", status="open", confidence="high", file="a.py"),
+        issues = _issues_dict(
+            _issue("dict_keys", status="open", confidence="high", file="a.py"),
+            _issue("dict_keys", status="open", confidence="high", file="a.py"),
         )
-        rate, issues, weighted = detector_pass_rate("dict_keys", findings, 10)
+        rate, issues, weighted = detector_pass_rate("dict_keys", issues, 10)
         assert issues == 2
         assert weighted == 1.0  # capped
 
     def test_test_coverage_is_file_based(self):
         """test_coverage detector uses loc_weight from detail, not confidence."""
-        f1 = _finding("test_coverage", status="open", confidence="high", file="a.py")
+        f1 = _issue("test_coverage", status="open", confidence="high", file="a.py")
         f1["detail"] = {"loc_weight": 5.0}
-        findings = _findings_dict(f1)
-        rate, issues, weighted = detector_pass_rate("test_coverage", findings, 100)
+        issues = _issues_dict(f1)
+        rate, issues, weighted = detector_pass_rate("test_coverage", issues, 100)
         assert issues == 1
         assert weighted == pytest.approx(5.0)
 
     def test_test_coverage_per_file_cap(self):
-        """Multiple findings for the same file are capped at one file's loc_weight."""
-        f1 = _finding("test_coverage", status="open", confidence="high", file="a.py")
+        """Multiple issues for the same file are capped at one file's loc_weight."""
+        f1 = _issue("test_coverage", status="open", confidence="high", file="a.py")
         f1["detail"] = {"loc_weight": 5.0}
-        f2 = _finding("test_coverage", status="open", confidence="high", file="a.py")
+        f2 = _issue("test_coverage", status="open", confidence="high", file="a.py")
         f2["detail"] = {"loc_weight": 5.0}
-        f3 = _finding("test_coverage", status="open", confidence="high", file="a.py")
+        f3 = _issue("test_coverage", status="open", confidence="high", file="a.py")
         f3["detail"] = {"loc_weight": 5.0}
-        findings = _findings_dict(f1, f2, f3)
-        rate, issues, weighted = detector_pass_rate("test_coverage", findings, 100)
+        issues = _issues_dict(f1, f2, f3)
+        rate, issues, weighted = detector_pass_rate("test_coverage", issues, 100)
         assert issues == 3
-        # 3 findings but capped at one file's loc_weight (5.0)
+        # 3 issues but capped at one file's loc_weight (5.0)
         assert weighted == pytest.approx(5.0)
 
     def test_test_coverage_loc_weight_default(self):
-        """test_coverage findings without loc_weight default to 1.0."""
-        findings = _findings_dict(
-            _finding("test_coverage", status="open", confidence="high", file="a.py"),
+        """test_coverage issues without loc_weight default to 1.0."""
+        issues = _issues_dict(
+            _issue("test_coverage", status="open", confidence="high", file="a.py"),
         )
-        rate, issues, weighted = detector_pass_rate("test_coverage", findings, 10)
+        rate, issues, weighted = detector_pass_rate("test_coverage", issues, 10)
         assert issues == 1
         assert weighted == pytest.approx(1.0)
 
@@ -340,41 +344,41 @@ class TestDetectorPassRate:
         import math
 
         # 500-LOC file: loc_weight = min(sqrt(500), 50) ≈ 22.4
-        f_large = _finding("test_coverage", status="open", file="big.py")
+        f_large = _issue("test_coverage", status="open", file="big.py")
         f_large["detail"] = {"loc_weight": min(math.sqrt(500), 50)}
         # 15-LOC file: loc_weight = min(sqrt(15), 50) ≈ 3.87
-        f_small = _finding("test_coverage", status="open", file="small.py")
+        f_small = _issue("test_coverage", status="open", file="small.py")
         f_small["detail"] = {"loc_weight": min(math.sqrt(15), 50)}
 
         # Only the large file
-        large_only = _findings_dict(f_large)
+        large_only = _issues_dict(f_large)
         _, _, w_large = detector_pass_rate("test_coverage", large_only, 100)
         # Only the small file
-        small_only = _findings_dict(f_small)
+        small_only = _issues_dict(f_small)
         _, _, w_small = detector_pass_rate("test_coverage", small_only, 100)
         # Large file contributes ~5.8x more
         assert w_large / w_small > 5
 
     def test_pass_rate_floor_at_zero(self):
         """Pass rate can't go below 0.0 even with huge weighted failures."""
-        findings = _findings_dict(
-            *[_finding("unused", status="open", confidence="high") for _ in range(20)]
+        issues = _issues_dict(
+            *[_issue("unused", status="open", confidence="high") for _ in range(20)]
         )
-        rate, issues, weighted = detector_pass_rate("unused", findings, 5)
+        rate, issues, weighted = detector_pass_rate("unused", issues, 5)
         assert rate == 0.0
         assert issues == 20
         assert weighted == 20.0
 
     def test_missing_confidence_defaults_to_medium(self):
         """If confidence key is missing, weight defaults to 0.7."""
-        finding_no_conf = {
+        issue_no_conf = {
             "detector": "unused",
             "status": "open",
             "file": "a.py",
             "zone": "production",
         }
-        findings = {"0": finding_no_conf}
-        rate, issues, weighted = detector_pass_rate("unused", findings, 10)
+        issues = {"0": issue_no_conf}
+        rate, issues, weighted = detector_pass_rate("unused", issues, 10)
         assert issues == 1
         assert weighted == pytest.approx(0.7)
 
@@ -385,7 +389,7 @@ class TestDetectorPassRate:
 
 
 class TestComputeDimensionScores:
-    def test_no_findings_all_potentials(self):
+    def test_no_issues_all_potentials(self):
         potentials = {"unused": 100, "logs": 50}
         result = compute_dimension_scores({}, potentials)
         # Both unused and logs are in "Code quality" dimension
@@ -393,7 +397,7 @@ class TestComputeDimensionScores:
         assert result["Code quality"]["score"] == 100.0
         assert result["Code quality"]["tier"] == 3
         assert result["Code quality"]["checks"] == 150
-        assert result["Code quality"]["issues"] == 0
+        assert result["Code quality"]["failing"] == 0
 
     def test_skips_dimensions_with_zero_potential(self):
         potentials = {"structural": 100}
@@ -403,7 +407,7 @@ class TestComputeDimensionScores:
         assert "Duplication" not in result
 
     def test_no_potentials_unassessed_dims_start_at_zero(self):
-        """Unassessed dimensions with no review findings start at 0%."""
+        """Unassessed dimensions with no review issues start at 0%."""
         result = compute_dimension_scores({}, {})
         # No mechanical dimensions
         assert "Code quality" not in result
@@ -413,59 +417,59 @@ class TestComputeDimensionScores:
         det = result["Naming quality"]["detectors"]["subjective_assessment"]
         assert det["placeholder"] is True
 
-    def test_unassessed_dim_with_review_findings_still_zero(self):
-        """Review findings don't drive score — unassessed placeholders stay at 0."""
-        f = _finding("review", status="open", file="a.py")
+    def test_unassessed_dim_with_review_issues_still_zero(self):
+        """Review issues don't drive score — unassessed placeholders stay at 0."""
+        f = _issue("review", status="open", file="a.py")
         f["detail"] = {"dimension": "naming_quality"}
-        findings = _findings_dict(f)
-        result = compute_dimension_scores(findings, {})
-        # Review findings are tracked but don't change placeholder score.
+        issues = _issues_dict(f)
+        result = compute_dimension_scores(issues, {})
+        # Review issues are tracked but don't change placeholder score.
         assert "Naming quality" in result
         assert result["Naming quality"]["score"] == 0.0
-        assert result["Naming quality"]["issues"] == 1
+        assert result["Naming quality"]["failing"] == 1
         det = result["Naming quality"]["detectors"]["subjective_assessment"]
         assert det["placeholder"] is True
 
-    def test_with_some_findings(self):
-        findings = _findings_dict(
-            _finding("unused", status="open", confidence="high"),
-            _finding("unused", status="open", confidence="high"),
+    def test_with_some_issues(self):
+        issues = _issues_dict(
+            _issue("unused", status="open", confidence="high"),
+            _issue("unused", status="open", confidence="high"),
         )
         potentials = {"unused": 10}
-        result = compute_dimension_scores(findings, potentials)
+        result = compute_dimension_scores(issues, potentials)
         assert "Code quality" in result
         dim = result["Code quality"]
         assert dim["score"] == 80.0  # (10 - 2) / 10 * 100
-        assert dim["issues"] == 2
+        assert dim["failing"] == 2
         assert dim["checks"] == 10
         assert "unused" in dim["detectors"]
 
     def test_multi_detector_dimension(self):
         """Dimension with multiple detectors pools potentials."""
-        findings = _findings_dict(
-            _finding("smells", status="open", confidence="high", file="a.py"),
-            _finding("react", status="open", confidence="high", file="b.tsx"),
+        issues = _issues_dict(
+            _issue("smells", status="open", confidence="high", file="a.py"),
+            _issue("react", status="open", confidence="high", file="b.tsx"),
         )
         potentials = {"smells": 50, "react": 50}
-        result = compute_dimension_scores(findings, potentials)
+        result = compute_dimension_scores(issues, potentials)
         dim = result["Code quality"]
-        # smells: 1 file-based finding -> 1.0 weighted failure
-        # react: 1 non-file-based finding -> 1.0 weighted failure
+        # smells: 1 file-based issue -> 1.0 weighted failure
+        # react: 1 non-file-based issue -> 1.0 weighted failure
         # total: (100 - 2.0) / 100 * 100 = 98.0
         assert dim["score"] == 98.0
         assert dim["checks"] == 100
-        assert dim["issues"] == 2
+        assert dim["failing"] == 2
         assert "smells" in dim["detectors"]
         assert "react" in dim["detectors"]
 
     def test_strict_mode_propagates(self):
-        findings = _findings_dict(
-            _finding("unused", status="wontfix"),
+        issues = _issues_dict(
+            _issue("unused", status="wontfix"),
         )
         potentials = {"unused": 10}
 
-        lenient = compute_dimension_scores(findings, potentials, strict=False)
-        strict = compute_dimension_scores(findings, potentials, strict=True)
+        lenient = compute_dimension_scores(issues, potentials, strict=False)
+        strict = compute_dimension_scores(issues, potentials, strict=True)
 
         assert lenient["Code quality"]["score"] == 100.0  # wontfix ignored
         assert strict["Code quality"]["score"] == 90.0  # wontfix counted
@@ -474,13 +478,13 @@ class TestComputeDimensionScores:
         """Only detectors with nonzero potential contribute."""
         # Code quality has many detectors; only naming has potential here
         potentials = {"naming": 20}  # only naming has potential
-        findings = _findings_dict(
-            _finding("naming", status="open", confidence="high"),
+        issues = _issues_dict(
+            _issue("naming", status="open", confidence="high"),
         )
-        result = compute_dimension_scores(findings, potentials)
+        result = compute_dimension_scores(issues, potentials)
         dim = result["Code quality"]
         assert dim["checks"] == 20
-        assert dim["issues"] == 1
+        assert dim["failing"] == 1
         assert "naming" in dim["detectors"]
         assert "orphaned" not in dim["detectors"]
 
@@ -500,7 +504,7 @@ class TestComputeHealthScore:
                 "score": 100.0,
                 "tier": 3,
                 "checks": 200,
-                "issues": 0,
+                "failing": 0,
                 "detectors": {},
             }
         }
@@ -509,12 +513,12 @@ class TestComputeHealthScore:
 
 class TestComputeScoreBundle:
     def test_bundle_mode_dimensions(self):
-        findings = _findings_dict(
-            _finding("unused", status="open", confidence="high"),
-            _finding("unused", status="wontfix", confidence="high"),
-            _finding("unused", status="fixed", confidence="high"),
+        issues = _issues_dict(
+            _issue("unused", status="open", confidence="high"),
+            _issue("unused", status="wontfix", confidence="high"),
+            _issue("unused", status="fixed", confidence="high"),
         )
-        bundle = compute_score_bundle(findings, {"unused": 10})
+        bundle = compute_score_bundle(issues, {"unused": 10})
 
         # By mode for the same detector:
         # lenient: open only -> 1.0 weighted failure -> 90%
@@ -528,10 +532,10 @@ class TestComputeScoreBundle:
         assert bundle.objective_score == 90.0
 
     def test_bundle_scores_match_health_function(self):
-        findings = _findings_dict(
-            _finding("unused", status="open", confidence="high"),
+        issues = _issues_dict(
+            _issue("unused", status="open", confidence="high"),
         )
-        bundle = compute_score_bundle(findings, {"unused": 10})
+        bundle = compute_score_bundle(issues, {"unused": 10})
 
         assert bundle.overall_score == compute_health_score(bundle.dimension_scores)
         assert bundle.strict_score == compute_health_score(
@@ -549,7 +553,7 @@ class TestComputeHealthScoreAdditional:
                 "score": 80.0,
                 "tier": 3,
                 "checks": 200,
-                "issues": 5,
+                "failing": 5,
                 "detectors": {},
             }
         }
@@ -562,14 +566,14 @@ class TestComputeHealthScoreAdditional:
                 "score": 100.0,
                 "tier": 3,
                 "checks": 200,
-                "issues": 0,
+                "failing": 0,
                 "detectors": {},
             },
             "Security": {
                 "score": 50.0,
                 "tier": 4,
                 "checks": 200,
-                "issues": 10,
+                "failing": 10,
                 "detectors": {},
             },
         }
@@ -586,14 +590,14 @@ class TestComputeHealthScoreAdditional:
                 "score": 100.0,
                 "tier": 3,
                 "checks": 200,
-                "issues": 0,
+                "failing": 0,
                 "detectors": {},
             },
             "Security": {
                 "score": 0.0,
                 "tier": 4,
                 "checks": 20,
-                "issues": 10,
+                "failing": 10,
                 "detectors": {},
             },
         }
@@ -612,7 +616,7 @@ class TestComputeHealthScoreAdditional:
                 "score": 50.0,
                 "tier": 3,
                 "checks": 0,
-                "issues": 0,
+                "failing": 0,
                 "detectors": {},
             },
         }
@@ -626,14 +630,14 @@ class TestComputeHealthBreakdown:
                 "score": 100.0,
                 "tier": 3,
                 "checks": 200,
-                "issues": 0,
+                "failing": 0,
                 "detectors": {},
             },
             "High elegance": {
                 "score": 80.0,
                 "tier": 4,
                 "checks": SUBJECTIVE_CHECKS,
-                "issues": 0,
+                "failing": 0,
                 "detectors": {"subjective_assessment": {}},
             },
         }
@@ -656,7 +660,7 @@ class TestComputeHealthBreakdown:
                 "score": 90.0,
                 "tier": 3,
                 "checks": 200,
-                "issues": 0,
+                "failing": 0,
                 "detectors": {},
             }
         }
@@ -717,12 +721,12 @@ class TestComputeScoreImpact:
                 "score": 80.0,
                 "tier": 3,
                 "checks": 200,
-                "issues": 40,
+                "failing": 40,
                 "detectors": {
                     "unused": {
                         "potential": 200,
                         "pass_rate": 0.8,
-                        "issues": 40,
+                        "failing": 40,
                         "weighted_failures": 40.0,
                     },
                 },
@@ -782,12 +786,12 @@ class TestComputeScoreImpact:
                 "score": 80.0,
                 "tier": 3,
                 "checks": 200,
-                "issues": 40,
+                "failing": 40,
                 "detectors": {
                     "unused": {
                         "potential": 200,
                         "pass_rate": 0.8,
-                        "issues": 40,
+                        "failing": 40,
                         "weighted_failures": 40.0,
                     },
                 },
@@ -796,12 +800,12 @@ class TestComputeScoreImpact:
                 "score": 100.0,
                 "tier": 4,
                 "checks": 200,
-                "issues": 0,
+                "failing": 0,
                 "detectors": {
                     "security": {
                         "potential": 200,
                         "pass_rate": 1.0,
-                        "issues": 0,
+                        "failing": 0,
                         "weighted_failures": 0.0,
                     },
                 },
@@ -821,55 +825,58 @@ class TestComputeScoreImpact:
 
 
 class TestReviewScoringExclusion:
-    """Review findings are excluded from detection scoring (assessed via subjective only)."""
+    """Review issues are excluded from detection scoring (assessed via subjective only)."""
 
     def test_multiplier_constant_still_defined(self):
         """HOLISTIC_MULTIPLIER still exists for display/priority purposes."""
-        from desloppify.scoring import HOLISTIC_MULTIPLIER, HOLISTIC_POTENTIAL
+        from desloppify.engine._scoring.policy.core import (
+            HOLISTIC_MULTIPLIER,
+            HOLISTIC_POTENTIAL,
+        )
 
         assert HOLISTIC_MULTIPLIER == 10.0
         assert HOLISTIC_POTENTIAL == 10
 
-    def test_review_findings_return_perfect_score(self):
+    def test_review_issues_return_perfect_score(self):
         """Review detector always returns (1.0, 0, 0.0) — excluded from scoring."""
-        f = _finding("review", confidence="high", file=".")
+        f = _issue("review", confidence="high", file=".")
         f["detail"] = {"holistic": True}
-        findings = _findings_dict(f)
-        rate, issues, weighted = detector_pass_rate("review", findings, 60)
+        issues = _issues_dict(f)
+        rate, issues, weighted = detector_pass_rate("review", issues, 60)
         assert rate == 1.0
         assert issues == 0
         assert weighted == 0.0
 
-    def test_multiple_review_findings_excluded(self):
-        """Multiple review findings still return perfect score."""
-        f1 = _finding("review", confidence="high", file=".")
+    def test_multiple_review_issues_excluded(self):
+        """Multiple review issues still return perfect score."""
+        f1 = _issue("review", confidence="high", file=".")
         f1["detail"] = {"holistic": True}
-        f2 = _finding("review", confidence="high", file=".")
+        f2 = _issue("review", confidence="high", file=".")
         f2["detail"] = {"holistic": True}
-        findings = _findings_dict(f1, f2)
-        rate, issues, weighted = detector_pass_rate("review", findings, 60)
+        issues = _issues_dict(f1, f2)
+        rate, issues, weighted = detector_pass_rate("review", issues, 60)
         assert rate == 1.0
         assert issues == 0
         assert weighted == 0.0
 
     def test_file_based_review_also_excluded(self):
         """file="." without holistic detail is also excluded for review detector."""
-        f = _finding("review", confidence="high", file=".")
+        f = _issue("review", confidence="high", file=".")
         f["detail"] = {}
-        findings = _findings_dict(f)
-        rate, issues, weighted = detector_pass_rate("review", findings, 60)
+        issues = _issues_dict(f)
+        rate, issues, weighted = detector_pass_rate("review", issues, 60)
         assert rate == 1.0
         assert issues == 0
         assert weighted == 0.0
 
-    def test_mixed_review_findings_excluded(self):
-        """Both holistic and file-based review findings are excluded."""
-        h = _finding("review", confidence="high", file=".")
+    def test_mixed_review_issues_excluded(self):
+        """Both holistic and file-based review issues are excluded."""
+        h = _issue("review", confidence="high", file=".")
         h["detail"] = {"holistic": True}
-        r1 = _finding("review", confidence="high", file="src/a.py")
-        r2 = _finding("review", confidence="high", file="src/a.py")
-        findings = _findings_dict(h, r1, r2)
-        rate, issues, weighted = detector_pass_rate("review", findings, 60)
+        r1 = _issue("review", confidence="high", file="src/a.py")
+        r2 = _issue("review", confidence="high", file="src/a.py")
+        issues = _issues_dict(h, r1, r2)
+        rate, issues, weighted = detector_pass_rate("review", issues, 60)
         assert rate == 1.0
         assert issues == 0
         assert weighted == 0.0
@@ -886,12 +893,12 @@ class TestSubjectiveScoring:
     def test_no_assessments_no_change(self):
         """Calling with subjective_assessments=None produces the same result as before."""
         potentials = {"unused": 100}
-        findings = _findings_dict(
-            _finding("unused", status="open", confidence="high"),
+        issues = _issues_dict(
+            _issue("unused", status="open", confidence="high"),
         )
-        without = compute_dimension_scores(findings, potentials)
+        without = compute_dimension_scores(issues, potentials)
         with_none = compute_dimension_scores(
-            findings, potentials, subjective_assessments=None
+            issues, potentials, subjective_assessments=None
         )
         assert without == with_none
 
@@ -905,7 +912,7 @@ class TestSubjectiveScoring:
         assert dim["score"] == 75.0
         assert dim["tier"] == 4
         assert dim["checks"] == SUBJECTIVE_CHECKS
-        assert dim["issues"] == 0
+        assert dim["failing"] == 0
         assert "subjective_assessment" in dim["detectors"]
         det = dim["detectors"]["subjective_assessment"]
         assert det["potential"] == SUBJECTIVE_CHECKS
@@ -959,9 +966,10 @@ class TestSubjectiveScoring:
         # Verify scoring.py references load_dimensions_for_lang, not
         # HOLISTIC_DIMENSIONS_BY_LANG (regression guard)
         import inspect
-        import desloppify.engine._state.scoring as state_scoring_mod
 
-        src = inspect.getsource(state_scoring_mod._update_objective_health)
+        import desloppify.engine._scoring.state_integration as state_scoring_mod
+
+        src = inspect.getsource(state_scoring_mod._resolve_allowed_subjective_dimensions)
         assert "load_dimensions_for_lang" in src
         assert "HOLISTIC_DIMENSIONS_BY_LANG" not in src
 
@@ -1047,7 +1055,7 @@ class TestSubjectiveScoring:
         at the configured SUBJECTIVE_WEIGHT_FRACTION ratio,
         regardless of how many subjective dimensions there are.
         """
-        from desloppify.scoring import SUBJECTIVE_WEIGHT_FRACTION
+        from desloppify.engine._scoring.policy.core import SUBJECTIVE_WEIGHT_FRACTION
 
         # Build a full-weight mechanical dimension alongside subjective assessments
         potentials = {"unused": MIN_SAMPLE}  # full weight: tier 3, sample_factor 1.0
@@ -1066,23 +1074,23 @@ class TestSubjectiveScoring:
         expected = 100.0 * (1 - SUBJECTIVE_WEIGHT_FRACTION) + 0.0 * SUBJECTIVE_WEIGHT_FRACTION
         assert score == pytest.approx(round(expected, 1), abs=0.2)
 
-    def test_assessment_counts_open_review_findings(self):
-        """Open review findings are tracked but don't drive the score."""
-        f1 = _finding("review", status="open", file="a.py")
+    def test_assessment_counts_open_review_issues(self):
+        """Open review issues are tracked but don't drive the score."""
+        f1 = _issue("review", status="open", file="a.py")
         f1["detail"] = {"dimension": "naming_quality"}
-        f2 = _finding("review", status="open", file="b.py")
+        f2 = _issue("review", status="open", file="b.py")
         f2["detail"] = {"dimension": "naming_quality"}
-        f3 = _finding("review", status="resolved", file="c.py")
+        f3 = _issue("review", status="resolved", file="c.py")
         f3["detail"] = {"dimension": "naming_quality"}
-        findings = _findings_dict(f1, f2, f3)
+        issues = _issues_dict(f1, f2, f3)
         assessments = {"naming_quality": {"score": 70}}
         result = compute_dimension_scores(
-            findings, {}, subjective_assessments=assessments
+            issues, {}, subjective_assessments=assessments
         )
         dim = result["Naming quality"]
-        assert dim["issues"] == 2  # only the 2 open ones tracked
+        assert dim["failing"] == 2  # only the 2 open ones tracked
         det = dim["detectors"]["subjective_assessment"]
-        assert det["issues"] == 2
+        assert det["failing"] == 2
         # Score driven by assessment (70), not issue count
         assert det["pass_rate"] == 0.7
         assert dim["score"] == 70.0
@@ -1114,17 +1122,17 @@ class TestSubjectiveScoring:
         assert det["component_scores"]["Indirection Cost"] == 72.0
         assert det["component_scores"]["Interface Honesty"] == 83.0
 
-    def test_assessment_ignores_non_review_findings(self):
-        """Smells findings with a dimension field do not count as assessment issues."""
-        f = _finding("smells", status="open", file="a.py")
+    def test_assessment_ignores_non_review_issues(self):
+        """Smells issues with a dimension field do not count as assessment issues."""
+        f = _issue("smells", status="open", file="a.py")
         f["detail"] = {"dimension": "naming_quality"}
-        findings = _findings_dict(f)
+        issues = _issues_dict(f)
         assessments = {"naming_quality": {"score": 80}}
         result = compute_dimension_scores(
-            findings, {}, subjective_assessments=assessments
+            issues, {}, subjective_assessments=assessments
         )
         dim = result["Naming quality"]
-        assert dim["issues"] == 0  # smells detector, not "review"
+        assert dim["failing"] == 0  # smells detector, not "review"
 
     def test_compute_score_impact_returns_zero_for_subjective(self):
         """compute_score_impact returns 0.0 for subjective dimensions."""
@@ -1181,13 +1189,13 @@ class TestSubjectiveDimensionCollision:
     def test_security_collision_suffixed(self):
         """Subjective 'security' → 'Security' collides with
         mechanical 'Security'. Should be suffixed with (subjective)."""
-        findings = _findings_dict(
-            _finding("security", status="open", confidence="high"),
+        issues = _issues_dict(
+            _issue("security", status="open", confidence="high"),
         )
         potentials = {"security": 10}
         assessments = {"security": {"score": 60}}
         result = compute_dimension_scores(
-            findings, potentials, subjective_assessments=assessments
+            issues, potentials, subjective_assessments=assessments
         )
         # Mechanical dimension should exist
         assert "Security" in result
@@ -1199,20 +1207,20 @@ class TestSubjectiveDimensionCollision:
 
     def test_no_collision_no_suffix(self):
         """When there's no collision, no suffix should be added."""
-        findings = {}
+        issues = {}
         potentials = {}
         assessments = {"naming_quality": {"score": 80}}
         result = compute_dimension_scores(
-            findings, potentials, subjective_assessments=assessments
+            issues, potentials, subjective_assessments=assessments
         )
         assert "Naming quality" in result
         assert "Naming quality (subjective)" not in result
 
     def test_multiple_collisions(self):
         """Multiple assessment dims that collide get suffixed independently."""
-        findings = _findings_dict(
-            _finding("security", status="open"),
-            _finding("test_coverage", status="open"),
+        issues = _issues_dict(
+            _issue("security", status="open"),
+            _issue("test_coverage", status="open"),
         )
         potentials = {"security": 10, "test_coverage": 10}
         assessments = {
@@ -1220,7 +1228,7 @@ class TestSubjectiveDimensionCollision:
             "test_health": {"score": 70},
         }
         result = compute_dimension_scores(
-            findings, potentials, subjective_assessments=assessments
+            issues, potentials, subjective_assessments=assessments
         )
         assert "Security" in result
         assert "Security (subjective)" in result
@@ -1254,11 +1262,11 @@ class TestDisplayNames:
 
 class TestHealthBreakdownRegression:
     def test_breakdown_exposes_pool_entries(self):
-        findings = _findings_dict(
-            _finding("unused", status="open"),
+        issues = _issues_dict(
+            _issue("unused", status="open"),
         )
         potentials = {"unused": 10}
-        scores = compute_dimension_scores(findings, potentials)
+        scores = compute_dimension_scores(issues, potentials)
         breakdown = compute_health_breakdown(scores)
 
         assert "mechanical_fraction" in breakdown

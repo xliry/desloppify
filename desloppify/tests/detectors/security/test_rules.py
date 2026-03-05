@@ -68,34 +68,34 @@ def test_insecure_random_entries_require_security_context():
         line="value = random.random()",
     ) == []
 
-    findings = rules_mod._insecure_random_entries(
+    issues = rules_mod._insecure_random_entries(
         filepath="src/nonce.py",
         line_num=5,
         line="nonce = random.random()",
     )
-    assert len(findings) == 1
-    assert findings[0]["detail"]["kind"] == "insecure_random"
+    assert len(issues) == 1
+    assert issues[0]["detail"]["kind"] == "insecure_random"
 
 
 def test_weak_crypto_entries_detect_verify_false():
-    findings = rules_mod._weak_crypto_entries(
+    issues = rules_mod._weak_crypto_entries(
         filepath="src/http.py",
         line_num=9,
         line="response = requests.get(url, verify=False)",
     )
 
-    assert len(findings) == 1
-    assert findings[0]["detail"]["kind"] == "weak_crypto_tls"
-    assert findings[0]["detail"]["severity"] == "high"
+    assert len(issues) == 1
+    assert issues[0]["detail"]["kind"] == "weak_crypto_tls"
+    assert issues[0]["detail"]["severity"] == "high"
 
 
 def test_sensitive_log_entries_detect_secret_logs():
-    findings = rules_mod._sensitive_log_entries(
+    issues = rules_mod._sensitive_log_entries(
         filepath="src/logging.py",
         line_num=11,
         line='logger.info("token=%s", token)',
     )
 
-    assert len(findings) == 1
-    assert findings[0]["detail"]["kind"] == "log_sensitive"
+    assert len(issues) == 1
+    assert issues[0]["detail"]["kind"] == "log_sensitive"
 

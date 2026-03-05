@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from desloppify.app.commands.status_parts import render as status_render
+from desloppify.app.commands.status import render as status_render
+from desloppify.app.commands.status import render_dimensions as render_dims_mod
 
 
 def _subjective_dim(score: float, strict: float, dimension_key: str) -> dict:
@@ -10,7 +11,7 @@ def _subjective_dim(score: float, strict: float, dimension_key: str) -> dict:
         "score": score,
         "strict": strict,
         "checks": 0,
-        "issues": 0,
+        "failing": 0,
         "tier": 4,
         "detectors": {
             "subjective_assessment": {
@@ -22,10 +23,10 @@ def _subjective_dim(score: float, strict: float, dimension_key: str) -> dict:
 
 def test_status_renders_open_issue_count_for_subjective_dimension(monkeypatch, capsys):
     monkeypatch.setattr(status_render, "colorize", lambda text, _style: text)
-    monkeypatch.setattr(status_render, "dimension_bar", lambda *_args, **_kwargs: "BAR")
+    monkeypatch.setattr(render_dims_mod, "dimension_bar", lambda *_args, **_kwargs: "BAR")
 
     state = {
-        "findings": {
+        "issues": {
             "review-1": {
                 "status": "open",
                 "detector": "review",
@@ -45,9 +46,9 @@ def test_status_renders_open_issue_count_for_subjective_dimension(monkeypatch, c
 
 def test_status_renders_zero_open_issue_hint_for_low_subjective_score(monkeypatch, capsys):
     monkeypatch.setattr(status_render, "colorize", lambda text, _style: text)
-    monkeypatch.setattr(status_render, "dimension_bar", lambda *_args, **_kwargs: "BAR")
+    monkeypatch.setattr(render_dims_mod, "dimension_bar", lambda *_args, **_kwargs: "BAR")
 
-    state = {"findings": {}}
+    state = {"issues": {}}
     dim_scores = {
         "Abstraction fit": _subjective_dim(68.8, 68.8, "abstraction_fitness"),
     }

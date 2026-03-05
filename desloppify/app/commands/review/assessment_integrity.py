@@ -2,22 +2,24 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 
 def subjective_at_target_dimensions(
-    state_or_dim_scores: dict,
-    dim_scores: dict | None = None,
+    state_or_dim_scores: dict[str, Any],
+    dim_scores: dict[str, Any] | None = None,
     *,
     target: float,
     scorecard_subjective_entries_fn,
     matches_target_score_fn,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Return scorecard-aligned subjective rows that sit on the target threshold."""
     state = state_or_dim_scores
     if dim_scores is None:
         dim_scores = state_or_dim_scores
         state = {"dimension_scores": dim_scores}
 
-    rows: list[dict] = []
+    rows: list[dict[str, Any]] = []
     for entry in scorecard_subjective_entries_fn(state, dim_scores=dim_scores):
         if entry.get("placeholder"):
             continue

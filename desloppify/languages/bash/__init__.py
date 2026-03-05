@@ -19,3 +19,8 @@ generic_lang(
     depth="shallow",
     treesitter_spec=BASH_SPEC,
 )
+
+__all__ = [
+    "generic_lang",
+    "BASH_SPEC",
+]

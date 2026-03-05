@@ -5,7 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from desloppify.core.enums import Confidence, Tier
+from desloppify.base.enums import Tier
+from desloppify.base.registry import DETECTORS
+from desloppify.base.scoring_constants import (
+    CONFIDENCE_WEIGHTS,
+    HOLISTIC_MULTIPLIER,
+)
 from desloppify.engine.policy.zones import EXCLUDED_ZONE_VALUES
 
 ScoreMode = Literal["lenient", "strict", "verified_strict"]
@@ -29,67 +34,68 @@ class DetectorScoringPolicy:
     excluded_zones: frozenset[str] = frozenset(EXCLUDED_ZONE_VALUES)
 
 
-# Security findings are excluded in non-production zones.
+# Security issues are excluded in non-production zones.
 SECURITY_EXCLUDED_ZONES = frozenset({"test", "config", "generated", "vendor"})
+_DEFAULT_EXCLUDED_ZONES = frozenset(EXCLUDED_ZONE_VALUES)
 
-# Central scoring policy for each detector: dimension/tier assignment,
-# weighting mode, and zone exclusions.
-DETECTOR_SCORING_POLICIES: dict[str, DetectorScoringPolicy] = {
-    # File health
-    "structural": DetectorScoringPolicy("structural", "File health", 3),
-    # Code quality
-    "unused": DetectorScoringPolicy("unused", "Code quality", 3),
-    "logs": DetectorScoringPolicy("logs", "Code quality", 3),
-    "exports": DetectorScoringPolicy("exports", "Code quality", 3),
-    "deprecated": DetectorScoringPolicy("deprecated", "Code quality", 3),
-    "props": DetectorScoringPolicy("props", "Code quality", 3),
-    "smells": DetectorScoringPolicy("smells", "Code quality", 3, file_based=True),
-    "react": DetectorScoringPolicy("react", "Code quality", 3),
-    "dict_keys": DetectorScoringPolicy("dict_keys", "Code quality", 3, file_based=True),
-    "global_mutable_config": DetectorScoringPolicy(
-        "global_mutable_config", "Code quality", 3
-    ),
-    "orphaned": DetectorScoringPolicy("orphaned", "Code quality", 3),
-    "flat_dirs": DetectorScoringPolicy("flat_dirs", "Code quality", 3),
-    "naming": DetectorScoringPolicy("naming", "Code quality", 3),
-    "facade": DetectorScoringPolicy("facade", "Code quality", 3),
-    "stale_exclude": DetectorScoringPolicy("stale_exclude", "Code quality", 3),
-    "patterns": DetectorScoringPolicy("patterns", "Code quality", 3),
-    "single_use": DetectorScoringPolicy("single_use", "Code quality", 3),
-    "coupling": DetectorScoringPolicy("coupling", "Code quality", 3),
-    "responsibility_cohesion": DetectorScoringPolicy(
-        "responsibility_cohesion", "Code quality", 3
-    ),
-    "private_imports": DetectorScoringPolicy("private_imports", "Code quality", 3),
-    "layer_violation": DetectorScoringPolicy("layer_violation", "Code quality", 3),
-    # Duplication
-    "dupes": DetectorScoringPolicy("dupes", "Duplication", 3),
-    "boilerplate_duplication": DetectorScoringPolicy(
-        "boilerplate_duplication", "Duplication", 3
-    ),
-    # Test health
-    "test_coverage": DetectorScoringPolicy(
-        "test_coverage", "Test health", 4, file_based=True, use_loc_weight=True
-    ),
-    "subjective_review": DetectorScoringPolicy(
-        "subjective_review", "Test health", 4, file_based=True
-    ),
-    # Security
-    "security": DetectorScoringPolicy(
-        "security",
-        "Security",
-        4,
-        file_based=True,
-        excluded_zones=SECURITY_EXCLUDED_ZONES,
-    ),
-    "cycles": DetectorScoringPolicy("cycles", "Security", 4),
-    # Design coherence (concerns confirmed by subjective review)
-    "concerns": DetectorScoringPolicy("concerns", None, None, file_based=True),
-    # Review findings are scored via subjective dimensions, not mechanical dimensions.
-    "review": DetectorScoringPolicy("review", None, None, file_based=True),
+# Non-objective detectors are tracked in state/queue but excluded from
+# mechanical dimension scoring.
+_NON_OBJECTIVE_DETECTORS = frozenset(
+    {
+        "concerns",
+        "review",
+        "uncalled_functions",
+        "unused_enums",
+        "signature",
+        "stale_wontfix",
+    }
+)
+
+# Keep policy details that are independent of tier/dimension wiring.
+_FILE_BASED_POLICY_DETECTORS = frozenset(
+    {"smells", "dict_keys", "test_coverage", "subjective_review", "security", "concerns", "review"}
+)
+_LOC_WEIGHT_POLICY_DETECTORS = frozenset({"test_coverage"})
+_EXCLUDED_ZONE_OVERRIDES: dict[str, frozenset[str]] = {
+    "security": SECURITY_EXCLUDED_ZONES,
 }
 
-# Detectors where potential = file count but findings are per-(file, sub-type).
+
+def _build_builtin_detector_scoring_policies() -> dict[str, DetectorScoringPolicy]:
+    """Build baseline scoring policies from DetectorMeta plus policy overrides."""
+    policies: dict[str, DetectorScoringPolicy] = {}
+    for detector, meta in DETECTORS.items():
+        if detector in _NON_OBJECTIVE_DETECTORS:
+            dimension: str | None = None
+            tier: int | None = None
+        else:
+            dimension = meta.dimension
+            tier = meta.tier
+
+        policies[detector] = DetectorScoringPolicy(
+            detector=detector,
+            dimension=dimension,
+            tier=tier,
+            file_based=detector in _FILE_BASED_POLICY_DETECTORS,
+            use_loc_weight=detector in _LOC_WEIGHT_POLICY_DETECTORS,
+            excluded_zones=_EXCLUDED_ZONE_OVERRIDES.get(
+                detector,
+                _DEFAULT_EXCLUDED_ZONES,
+            ),
+        )
+    return policies
+
+
+# Central scoring policy for each detector: tier/dimension come from registry,
+# while file-based and zone behavior are preserved via local overrides.
+DETECTOR_SCORING_POLICIES: dict[str, DetectorScoringPolicy] = (
+    _build_builtin_detector_scoring_policies()
+)
+_BASE_DETECTOR_SCORING_POLICIES: dict[str, DetectorScoringPolicy] = dict(
+    DETECTOR_SCORING_POLICIES
+)
+
+# Detectors where potential = file count but issues are per-(file, sub-type).
 # Per-file weighted failures are capped at 1.0 to match the file-based denominator.
 FILE_BASED_DETECTORS = {
     detector
@@ -130,17 +136,9 @@ TIER_WEIGHTS = {
     Tier.JUDGMENT: 3,
     Tier.MAJOR_REFACTOR: 4,
 }
-CONFIDENCE_WEIGHTS = {Confidence.HIGH: 1.0, Confidence.MEDIUM: 0.7, Confidence.LOW: 0.3}
-
 # Minimum checks for full dimension weight — below this, weight is dampened
 # proportionally. Prevents small-sample dimensions from swinging the overall score.
 MIN_SAMPLE = 200
-
-# Holistic review weight: findings with file="." and detail.holistic=True
-# get a 10x weight multiplier for display/priority purposes (issues list,
-# remediation engine).  NOT used in score computation — review findings are
-# excluded from the detection scoring pipeline (scored via assessments only).
-HOLISTIC_MULTIPLIER = 10.0
 HOLISTIC_POTENTIAL = 10
 
 # Budget: subjective dimensions get this fraction of the overall score.
@@ -159,7 +157,17 @@ MECHANICAL_DIMENSION_WEIGHTS: dict[str, float] = {
 }
 
 # Per-dimension weighting within the subjective pool.
-# Emphasize elegance and contract/type coherence for a stronger architecture north star.
+# Rationale (kept in sync with review metadata modules):
+# - High/mid elegance carry the most weight because architectural decomposition
+#   and seam quality drive broad maintainability and change velocity.
+# - Low elegance, contracts, and type safety remain high because they prevent
+#   correctness drift and interface ambiguity.
+# - Design coherence is a medium-high bridge between architecture intent and
+#   the detector-led concern stream.
+# - Structure navigation and error consistency are meaningful but secondary
+#   signals compared to core architecture/correctness dimensions.
+# - Naming quality and AI-generated debt are intentionally low-weight nudges:
+#   useful for polish/cleanup, but they should not dominate score movement.
 SUBJECTIVE_DIMENSION_WEIGHTS: dict[str, float] = {
     "high elegance": 22.0,
     "mid elegance": 22.0,
@@ -213,6 +221,13 @@ def register_scoring_policy(policy: DetectorScoringPolicy) -> None:
     _rebuild_derived()
 
 
+def reset_registered_scoring_policies() -> None:
+    """Reset runtime-added scoring policies to built-in defaults."""
+    DETECTOR_SCORING_POLICIES.clear()
+    DETECTOR_SCORING_POLICIES.update(_BASE_DETECTOR_SCORING_POLICIES)
+    _rebuild_derived()
+
+
 def _rebuild_derived() -> None:
     """Rebuild DIMENSIONS, DIMENSIONS_BY_NAME, FILE_BASED_DETECTORS from current state.
 
@@ -263,4 +278,5 @@ __all__ = [
     "detector_policy",
     "matches_target_score",
     "register_scoring_policy",
+    "reset_registered_scoring_policies",
 ]

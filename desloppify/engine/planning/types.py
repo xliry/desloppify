@@ -6,14 +6,14 @@ from typing import TypedDict
 
 from desloppify.state import (
     DimensionScore,
-    Finding,
+    Issue,
     StateModel,
     StateStats,
 )
 
 
 class PlanState(TypedDict, total=False):
-    findings: dict[str, Finding]
+    issues: dict[str, Issue]
     stats: StateStats
     dimension_scores: dict[str, DimensionScore]
     codebase_metrics: dict[str, dict]

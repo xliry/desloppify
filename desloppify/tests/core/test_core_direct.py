@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 import logging
 
-import desloppify.core.fallbacks as fallbacks_mod
-import desloppify.core.query as query_mod
+import desloppify.base.output.fallbacks as fallbacks_mod
+import desloppify.base.search.query as query_mod
 
 
 def test_write_query_injects_config_payload(tmp_path, monkeypatch):
@@ -43,6 +43,42 @@ def test_write_query_records_config_error(tmp_path, monkeypatch):
     assert "config_error" in saved
     assert "invalid config" in saved["config_error"]
     assert result.ok is True
+
+
+def test_write_query_truncates_oversized_payload(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(query_mod, "QUERY_PAYLOAD_MAX_BYTES", 1200)
+    monkeypatch.setattr(query_mod, "QUERY_ITEMS_SOFT_LIMIT", 5)
+    monkeypatch.setattr(query_mod, "load_config", lambda: {})
+    monkeypatch.setattr(query_mod, "config_for_query", lambda _cfg: {"source": "test"})
+
+    query_path = tmp_path / "query.json"
+    payload = {
+        "command": "next",
+        "queue": {"total": 500},
+        "items": [
+            {
+                "id": f"security::src/f{i}.py::b101",
+                "kind": "issue",
+                "summary": "x" * 1200,
+                "detail": {"blob": "y" * 1200},
+            }
+            for i in range(50)
+        ],
+        "narrative": {"hint": "z" * 5000},
+    }
+
+    result = query_mod.write_query(payload, query_file=query_path)
+
+    saved = json.loads(query_path.read_text())
+    stderr = capsys.readouterr().err
+
+    assert result.ok is True
+    assert "query_truncated" in saved
+    assert saved["query_truncated"]["max_bytes"] == 1200
+    assert saved["query_truncated"]["actual_bytes"] <= 1200
+    assert "minimal" in saved["query_truncated"]["applied"]
+    assert saved["config"]["source"] == "test"
+    assert "payload exceeded budget" in stderr
 
 
 def test_restore_files_best_effort_collects_failures():

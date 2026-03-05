@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from desloppify.intelligence.narrative._constants import STRUCTURAL_MERGE
-from desloppify.scoring import (
+from desloppify.engine._scoring.detection import merge_potentials
+from desloppify.engine._scoring.policy.core import (
     DIMENSIONS,
     TIER_WEIGHTS,
-    compute_score_impact,
-    merge_potentials,
 )
-from desloppify.state import StateModel, path_scoped_findings
+from desloppify.engine._scoring.results.core import compute_score_impact
+from desloppify.intelligence.narrative._constants import STRUCTURAL_MERGE
+from desloppify.state import StateModel, path_scoped_issues
 
 
 def _analyze_dimensions(dim_scores: dict, history: list[dict], state: StateModel) -> dict:
@@ -39,7 +39,7 @@ def _lowest_dimensions(dim_scores: dict, potentials: dict) -> list[dict]:
     lowest = []
     for name, ds in sorted_dims[:3]:
         strict = ds.get("strict", ds["score"])
-        issues = ds["issues"]
+        issues = ds.get("failing", 0)
         impact = _dominant_detector_impact(
             dim_scores=dim_scores,
             detectors=ds.get("detectors", {}),
@@ -49,7 +49,7 @@ def _lowest_dimensions(dim_scores: dict, potentials: dict) -> list[dict]:
         entry = {
             "name": name,
             "strict": round(strict, 1),
-            "issues": issues,
+            "failing": issues,
             "impact": round(impact, 1),
         }
         if is_subjective:
@@ -62,8 +62,8 @@ def _lowest_dimensions(dim_scores: dict, potentials: dict) -> list[dict]:
 def _biggest_gap_dimensions(dim_scores: dict, state: StateModel) -> list[dict]:
     """Build summary entries for dimensions with the biggest strict gap."""
     biggest_gap = []
-    scoped = path_scoped_findings(
-        state.get("findings", {}), state.get("scan_path")
+    scoped = path_scoped_issues(
+        state.get("issues", {}), state.get("scan_path")
     )
     for name, ds in dim_scores.items():
         lenient = ds["score"]
@@ -74,7 +74,7 @@ def _biggest_gap_dimensions(dim_scores: dict, state: StateModel) -> list[dict]:
                 1
                 for f in scoped.values()
                 if f["status"] == "wontfix"
-                and _finding_in_dimension(f, name, dim_scores)
+                and _issue_in_dimension(f, name, dim_scores)
             )
             biggest_gap.append(
                 {
@@ -139,7 +139,7 @@ def _dominant_detector_impact(
     }
     impact = 0.0
     for detector_name, detector_data in detectors.items():
-        issue_count = int(detector_data.get("issues", 0) or 0)
+        issue_count = int(detector_data.get("failing", 0) or 0)
         if issue_count <= 0:
             continue
         detector_impact = compute_score_impact(
@@ -152,9 +152,9 @@ def _dominant_detector_impact(
     return impact
 
 
-def _finding_in_dimension(finding: dict, dim_name: str, dim_scores: dict) -> bool:
-    """Check if a finding's detector belongs to a dimension."""
-    detector = finding.get("detector", "")
+def _issue_in_dimension(issue: dict, dim_name: str, dim_scores: dict) -> bool:
+    """Check if a issue's detector belongs to a dimension."""
+    detector = issue.get("detector", "")
     if detector in STRUCTURAL_MERGE:
         detector = "structural"
     for dim in DIMENSIONS:
@@ -163,10 +163,10 @@ def _finding_in_dimension(finding: dict, dim_name: str, dim_scores: dict) -> boo
     return False
 
 
-def _analyze_debt(dim_scores: dict, findings: dict, history: list[dict]) -> dict:
+def _analyze_debt(dim_scores: dict, issues: dict, history: list[dict]) -> dict:
     """Compute wontfix debt analysis."""
     # Count wontfix
-    wontfix_count = sum(1 for f in findings.values() if f["status"] == "wontfix")
+    wontfix_count = sum(1 for f in issues.values() if f["status"] == "wontfix")
 
     # Compute gap per dimension
     worst_dim = None

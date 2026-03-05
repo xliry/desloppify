@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from desloppify.state import StateModel, get_strict_score
+from desloppify.state import StateModel, score_snapshot
 
 from ._constants import _history_strict
 
 
-def _detect_phase(history: list[dict], strict_score: float | None) -> str:
+def detect_phase(history: list[dict], strict_score: float | None) -> str:
     """Detect project phase from scan history trajectory."""
     if not history:
         return "first_scan"
@@ -50,11 +50,11 @@ def _detect_phase(history: list[dict], strict_score: float | None) -> str:
     return "middle_grind"
 
 
-def _detect_milestone(
+def detect_milestone(
     state: StateModel, _diff: dict | None, history: list[dict],
 ) -> str | None:
     """Detect notable milestones worth celebrating."""
-    strict_score = get_strict_score(state)
+    strict_score = score_snapshot(state).strict
     stats = state.get("stats", {})
 
     # Check T1 clear
@@ -85,6 +85,6 @@ def _detect_milestone(
             return "All T1 items cleared!"
 
     if stats.get("open", 0) == 0 and stats.get("total", 0) > 0:
-        return "Zero open findings!"
+        return "Zero open issues!"
 
     return None

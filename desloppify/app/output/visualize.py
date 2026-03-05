@@ -9,18 +9,23 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import desloppify.languages as lang_api
 from desloppify.app.output._viz_cmd_context import load_cmd_context
 from desloppify.app.output.tree_text import render_tree_lines
-from desloppify.core.file_paths import resolve_scan_file
-from desloppify.core.fallbacks import (
+from desloppify.base.discovery.file_paths import (
+    rel,
+    safe_write_text,
+)
+from desloppify.base.discovery.source import find_source_files
+from desloppify.base.output.fallbacks import (
     log_best_effort_failure,
     print_write_error,
     warn_best_effort,
 )
-from desloppify.core.output_contract import OutputResult
-from desloppify.core.discovery_api import rel, safe_write_text
-from desloppify.state import get_objective_score, get_overall_score, get_strict_score
-from desloppify.core.output_api import colorize
+from desloppify.base.discovery.file_paths import resolve_scan_file
+from desloppify.base.output.terminal import colorize
+from desloppify.base.output.contract import OutputResult
+from desloppify.state import score_snapshot
 
 D3_CDN_URL = "https://d3js.org/d3.v7.min.js"
 logger = logging.getLogger(__name__)
@@ -41,14 +46,13 @@ def _resolve_visualization_lang(path: Path, lang):
     """Resolve language config for visualization if not already provided."""
     if lang:
         return lang
-    from desloppify.languages import auto_detect_lang, get_lang
 
     search_roots = [path if path.is_dir() else path.parent]
     search_roots.extend(search_roots[0].parents)
     warned = False
     for root in search_roots:
         try:
-            detected = auto_detect_lang(root)
+            detected = lang_api.auto_detect_lang(root)
         except _RECOVERABLE_LANG_RESOLUTION_ERRORS as exc:
             log_best_effort_failure(
                 logger,
@@ -64,7 +68,7 @@ def _resolve_visualization_lang(path: Path, lang):
             continue
         if detected:
             try:
-                return get_lang(detected)
+                return lang_api.get_lang(detected)
             except _RECOVERABLE_LANG_RESOLUTION_ERRORS as exc:
                 log_best_effort_failure(
                     logger,
@@ -83,14 +87,11 @@ def _resolve_visualization_lang(path: Path, lang):
 
 def _fallback_source_files(path: Path) -> list[str]:
     """Collect source files using extensions from all registered language plugins."""
-    from desloppify.core.discovery_api import find_source_files
-    from desloppify.languages import available_langs, get_lang
-
     extensions: set[str] = set()
     warned = False
-    for lang_name in available_langs():
+    for lang_name in lang_api.available_langs():
         try:
-            cfg = get_lang(lang_name)
+            cfg = lang_api.get_lang(lang_name)
         except _RECOVERABLE_LANG_RESOLUTION_ERRORS as exc:
             log_best_effort_failure(
                 logger,
@@ -144,7 +145,7 @@ def _collect_file_data(path: Path, lang=None) -> list[dict]:
     return files
 
 
-def _build_tree(files: list[dict], dep_graph: dict, findings_by_file: dict) -> dict:
+def _build_tree(files: list[dict], dep_graph: dict, issues_by_file: dict) -> dict:
     """Build nested tree structure for D3 treemap."""
     root: dict = {"name": "src", "children": {}}
 
@@ -162,8 +163,8 @@ def _build_tree(files: list[dict], dep_graph: dict, findings_by_file: dict) -> d
         filename = parts[-1]
         resolved = f["abs_path"]
         dep_entry = dep_graph.get(resolved, {"import_count": 0, "importer_count": 0})
-        file_findings = findings_by_file.get(f["path"], [])
-        open_findings = [ff for ff in file_findings if ff.get("status") == "open"]
+        file_issues = issues_by_file.get(f["path"], [])
+        open_issues = [ff for ff in file_issues if ff.get("status") == "open"]
 
         node["children"][filename] = {
             "name": filename,
@@ -171,9 +172,9 @@ def _build_tree(files: list[dict], dep_graph: dict, findings_by_file: dict) -> d
             "loc": max(f["loc"], 1),  # D3 needs >0 values
             "fan_in": dep_entry.get("importer_count", 0),
             "fan_out": dep_entry.get("import_count", 0),
-            "findings_total": len(file_findings),
-            "findings_open": len(open_findings),
-            "finding_summaries": [ff.get("summary", "") for ff in open_findings[:20]],
+            "issues_total": len(file_issues),
+            "issues_open": len(open_issues),
+            "issue_summaries": [ff.get("summary", "") for ff in open_issues[:20]],
         }
 
     # Convert children dicts to arrays (D3 format)
@@ -214,11 +215,11 @@ def _build_dep_graph_for_path(path: Path, lang) -> dict:
     return {}
 
 
-def _findings_by_file(state: dict | None) -> dict[str, list]:
-    """Group findings from state by file path."""
+def _issues_by_file(state: dict | None) -> dict[str, list]:
+    """Group issues from state by file path."""
     result: dict[str, list] = defaultdict(list)
-    if state and state.get("findings"):
-        for f in state["findings"].values():
+    if state and state.get("issues"):
+        for f in state["issues"].values():
             result[f["file"]].append(f)
     return result
 
@@ -244,26 +245,27 @@ def generate_visualization(
     try:
         files = _collect_file_data(path, lang)
         dep_graph = _build_dep_graph_for_path(path, lang)
-        findings_by_file = _findings_by_file(state)
-        tree = _build_tree(files, dep_graph, findings_by_file)
+        issues_by_file = _issues_by_file(state)
+        tree = _build_tree(files, dep_graph, issues_by_file)
         # Escape </ to prevent </script> in filenames from breaking HTML
         tree_json = json.dumps(tree).replace("</", r"<\/")
 
         # Stats for header
         total_files = len(files)
         total_loc = sum(f["loc"] for f in files)
-        total_findings = sum(len(v) for v in findings_by_file.values())
-        open_findings = sum(
-            1 for fs in findings_by_file.values() for f in fs if f.get("status") == "open"
+        total_issues = sum(len(v) for v in issues_by_file.values())
+        open_issues = sum(
+            1 for fs in issues_by_file.values() for f in fs if f.get("status") == "open"
         )
         if state:
-            overall_score = get_overall_score(state)
-            objective_score = get_objective_score(state)
-            strict_score = get_strict_score(state)
+            scores = score_snapshot(state)
+            overall_score = scores.overall
+            objective_score = scores.objective
+            strict_score = scores.strict
         else:
             overall_score = objective_score = strict_score = None
 
-        def fmt_score(value):
+        def _fmt_viz_score(value):
             return f"{value:.1f}" if isinstance(value, int | float) else "N/A"
 
         replacements = {
@@ -271,11 +273,11 @@ def generate_visualization(
             "__TREE_DATA__": tree_json,
             "__TOTAL_FILES__": str(total_files),
             "__TOTAL_LOC__": f"{total_loc:,}",
-            "__TOTAL_FINDINGS__": str(total_findings),
-            "__OPEN_FINDINGS__": str(open_findings),
-            "__OVERALL_SCORE__": fmt_score(overall_score),
-            "__OBJECTIVE_SCORE__": fmt_score(objective_score),
-            "__STRICT_SCORE__": fmt_score(strict_score),
+            "__TOTAL_ISSUES__": str(total_issues),
+            "__OPEN_ISSUES__": str(open_issues),
+            "__OVERALL_SCORE__": _fmt_viz_score(overall_score),
+            "__OBJECTIVE_SCORE__": _fmt_viz_score(objective_score),
+            "__STRICT_SCORE__": _fmt_viz_score(strict_score),
         }
         html = _get_html_template()
         for placeholder, value in replacements.items():
@@ -343,7 +345,7 @@ def generate_tree_text(
     resolved_options = options or TreeTextOptions()
     files = _collect_file_data(path, lang)
     dep_graph = _build_dep_graph_for_path(path, lang)
-    tree = _build_tree(files, dep_graph, _findings_by_file(state))
+    tree = _build_tree(files, dep_graph, _issues_by_file(state))
 
     root = tree
     if resolved_options.focus:

@@ -4,14 +4,12 @@ from pathlib import Path
 
 import pytest
 
-import desloppify.languages.typescript.detectors.smells as smells_detector_mod
 from desloppify.languages.typescript.detectors.smells import detect_smells
 
 
 @pytest.fixture(autouse=True)
-def _root(tmp_path, set_project_root, monkeypatch):
+def _root(tmp_path, set_project_root):
     """Point PROJECT_ROOT at the tmp directory via RuntimeContext."""
-    monkeypatch.setattr(smells_detector_mod, "PROJECT_ROOT", tmp_path)
 
 
 def _write(tmp_path: Path, name: str, content: str) -> Path:
@@ -229,7 +227,7 @@ def test_detect_docs_script_drift(tmp_path):
 
 
 def test_docs_script_drift_not_flagged_when_readme_mentions_scripts(tmp_path):
-    """README command docs should suppress docs drift finding."""
+    """README command docs should suppress docs drift issue."""
 
     _write(
         tmp_path,
@@ -374,8 +372,8 @@ def test_detect_monster_function(tmp_path):
     assert "monster_function" in ids
 
 
-def test_detect_dead_function(tmp_path):
-    """Detects functions with empty body or only return null."""
+def test_detect_stub_function(tmp_path):
+    """Detects stub functions with empty body or only return null (severity low)."""
 
     _write(
         tmp_path,
@@ -384,9 +382,10 @@ def test_detect_dead_function(tmp_path):
     )
     entries, _ = detect_smells(tmp_path)
     ids = {e["id"] for e in entries}
-    assert "dead_function" in ids
-    dead = next(e for e in entries if e["id"] == "dead_function")
-    assert dead["count"] == 2
+    assert "stub_function" in ids
+    stub = next(e for e in entries if e["id"] == "stub_function")
+    assert stub["count"] == 2
+    assert stub["severity"] == "low"
 
 
 def test_detect_catch_return_default(tmp_path):

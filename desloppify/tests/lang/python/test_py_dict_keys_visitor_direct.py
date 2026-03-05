@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ast
 
-from desloppify.languages.python.detectors.dict_keys_visitor import DictKeyVisitor
+from desloppify.languages.python.detectors.dict_keys.visitor import DictKeyVisitor
 
 
 def test_dict_key_visitor_captures_dict_literals_for_schema_drift():
@@ -31,5 +31,5 @@ def update():
     visitor = DictKeyVisitor("sample.py")
     visitor.visit(ast.parse(source))
 
-    assert isinstance(visitor._findings, list)
+    assert isinstance(visitor._issues, list)
     assert isinstance(visitor._dict_literals, list)

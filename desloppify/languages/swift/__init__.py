@@ -20,3 +20,8 @@ generic_lang(
     detect_markers=["Package.swift"],
     treesitter_spec=SWIFT_SPEC,
 )
+
+__all__ = [
+    "generic_lang",
+    "SWIFT_SPEC",
+]

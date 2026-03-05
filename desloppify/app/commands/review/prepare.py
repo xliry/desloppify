@@ -2,36 +2,18 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 from desloppify.app.commands.helpers.query import write_query
-from desloppify.app.commands.review import runtime as review_runtime_mod
-from desloppify.core._internal.coercions import coerce_positive_int
-from desloppify.intelligence import narrative as narrative_mod
+from desloppify.base.coercions import coerce_positive_int
+from desloppify.base.exception_sets import CommandError
+from desloppify.base.output.terminal import colorize
+import desloppify.intelligence.narrative.core as narrative_mod
 from desloppify.intelligence import review as review_mod
-from desloppify.core.output_api import colorize
 
 from .helpers import parse_dimensions
-
-DEFAULT_REVIEW_BATCH_MAX_FILES = 80
-
-
-def _redacted_review_config(config: dict | None) -> dict:
-    """Return review packet config with target score removed for blind assessment."""
-    if not isinstance(config, dict):
-        return {}
-    return {key: value for key, value in config.items() if key != "target_strict_score"}
-
-
-def _coerce_review_batch_file_limit(config: dict | None) -> int | None:
-    """Resolve per-batch review file cap from config (0/negative => unlimited)."""
-    raw = (config or {}).get("review_batch_max_files", DEFAULT_REVIEW_BATCH_MAX_FILES)
-    try:
-        value = int(raw)
-    except (TypeError, ValueError):
-        return DEFAULT_REVIEW_BATCH_MAX_FILES
-    return value if value > 0 else None
+from .packet.policy import coerce_review_batch_file_limit, redacted_review_config
+from .runtime.setup import setup_lang_concrete
 
 
 def do_prepare(
@@ -56,7 +38,7 @@ def do_prepare(
         default=20,
     )
 
-    lang_run, found_files = review_runtime_mod.setup_lang_concrete(lang, path, config)
+    lang_run, found_files = setup_lang_concrete(lang, path, config)
 
     lang_name = lang_run.name
     narrative = narrative_mod.compute_narrative(
@@ -70,14 +52,14 @@ def do_prepare(
         options=review_mod.HolisticReviewPrepareOptions(
             dimensions=dimensions,
             files=found_files or None,
-            max_files_per_batch=_coerce_review_batch_file_limit(config),
+            max_files_per_batch=coerce_review_batch_file_limit(config),
             include_issue_history=retrospective,
             issue_history_max_issues=retrospective_max_issues,
             issue_history_max_batch_items=retrospective_max_batch_items,
         ),
     )
     next_command = (
-        "desloppify review --run-batches --runner codex --parallel --scan-after-import"
+        "desloppify review --prepare"
     )
     if retrospective:
         next_command += (
@@ -85,39 +67,30 @@ def do_prepare(
             f" --retrospective-max-issues {retrospective_max_issues}"
             f" --retrospective-max-batch-items {retrospective_max_batch_items}"
         )
-    data["config"] = _redacted_review_config(config)
+    data["config"] = redacted_review_config(config)
     data["narrative"] = narrative
     data["next_command"] = next_command
     total = data.get("total_files", 0)
     if total == 0:
-        print(
-            colorize(
-                f"\n  Error: no files found at path '{path}'. "
-                "Nothing to review.",
-                "red",
-            ),
-            file=sys.stderr,
-        )
+        msg = f"no files found at path '{path}'. Nothing to review."
         scan_path = state.get("scan_path") if isinstance(state, dict) else None
         if scan_path:
-            print(
-                colorize(
-                    f"  Hint: your last scan used --path {scan_path}. "
-                    f"Try: desloppify review --prepare --path {scan_path}",
-                    "yellow",
-                ),
-                file=sys.stderr,
+            msg += (
+                f"\nHint: your last scan used --path {scan_path}. "
+                f"Try: desloppify review --prepare --path {scan_path}"
             )
         else:
-            print(
-                colorize(
-                    "  Hint: pass --path <dir> matching the path used during scan.",
-                    "yellow",
-                ),
-                file=sys.stderr,
-            )
-        sys.exit(1)
+            msg += "\nHint: pass --path <dir> matching the path used during scan."
+        raise CommandError(msg, exit_code=1)
     write_query(data)
+    _print_prepare_summary(data, next_command=next_command, retrospective=retrospective)
+
+
+def _print_prepare_summary(
+    data: dict, *, next_command: str, retrospective: bool,
+) -> None:
+    """Print the prepare summary to the terminal."""
+    total = data.get("total_files", 0)
     batches = data.get("investigation_batches", [])
     print(colorize(f"\n  Holistic review prepared: {total} files in codebase", "bold"))
     if retrospective:
@@ -144,28 +117,33 @@ def do_prepare(
     print(colorize("\n  Workflow:", "bold"))
     for step_i, step in enumerate(data.get("workflow", []), 1):
         print(colorize(f"    {step_i}. {step}", "dim"))
-    print(colorize("\n  AGENT PLAN:", "yellow"))
+    n_batches = len(data.get("investigation_batches", []))
+    print(colorize("\n  AGENT PLAN — pick the path matching your runner:", "yellow"))
     print(
         colorize(
-            f"  1. Preferred: `{next_command}`",
+            "  1. Codex: `desloppify review --run-batches --runner codex --parallel --scan-after-import`",
             "dim",
         )
     )
     print(
         colorize(
-            "  2. Cloud/manual fallback: run external reviewers, merge to findings.json, then import",
+            f"  2. Claude / other agent: `desloppify review --run-batches --dry-run`"
+            f" → generates {n_batches} prompt files in .desloppify/subagent_runs/<run>/prompts/."
+            f" Launch {n_batches} subagents in parallel (one per prompt),"
+            " write output to the matching results/ file,"
+            " then `desloppify review --import-run <run-dir> --scan-after-import`",
             "dim",
         )
     )
     print(
         colorize(
-            "  3. Claude cloud durable path: `desloppify review --external-start --external-runner claude` then run the printed `--external-submit` command",
+            "  3. Cloud/external: `desloppify review --external-start --external-runner claude` → follow template → `--external-submit`",
             "dim",
         )
     )
     print(
         colorize(
-            "  4. Findings-only fallback: `desloppify review --import findings.json`",
+            "  4. Issues-only fallback: `desloppify review --import issues.json`",
             "dim",
         )
     )
@@ -177,15 +155,7 @@ def do_prepare(
     )
     print(
         colorize(
-            "  Next command to improve subjective scores: "
-            f"`{next_command}`",
-            "dim",
-        )
-    )
-    print(
-        colorize(
-            "\n  → query.json updated. "
-            f"Preferred next step: {next_command}",
+            "\n  → query.json updated. Batches are pre-defined — do NOT regroup dimensions yourself.",
             "cyan",
         )
     )

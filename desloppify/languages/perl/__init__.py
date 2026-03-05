@@ -19,3 +19,8 @@ generic_lang(
     depth="minimal",
     treesitter_spec=PERL_SPEC,
 )
+
+__all__ = [
+    "generic_lang",
+    "PERL_SPEC",
+]

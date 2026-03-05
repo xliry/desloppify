@@ -6,7 +6,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from desloppify.core.discovery_api import rel
+from desloppify.base.discovery.file_paths import rel
+from desloppify.base.discovery.file_paths import count_lines
 
 
 @dataclass
@@ -82,7 +83,7 @@ def detect_orphaned_files(
             continue
 
         try:
-            loc = len(Path(filepath).read_text().splitlines())
+            loc = count_lines(Path(filepath))
         except (OSError, UnicodeDecodeError):
             loc = 0
 

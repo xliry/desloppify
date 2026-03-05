@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
-from desloppify import scoring as scoring_mod
 from desloppify import state as state_mod
-from desloppify.engine.work_queue import (
+from desloppify.base import registry as registry_mod
+from desloppify.base.output.terminal import colorize
+from desloppify.engine._scoring.policy.core import DIMENSIONS
+from desloppify.engine._scoring.subjective.core import DISPLAY_NAMES
+from desloppify.engine._state.schema import StateModel
+from desloppify.engine._work_queue.core import (
     QueueBuildOptions,
     build_work_queue,
 )
-from desloppify.core.output_api import colorize
 
 
 @dataclass(frozen=True)
@@ -24,7 +28,63 @@ class ResolvedEntity:
     is_subjective: bool = False  # Whether this is a subjective dimension
 
 
-def resolve_entity(pattern: str, state: dict) -> ResolvedEntity:
+def _resolve_special_view(pattern: str, lowered: str) -> ResolvedEntity | None:
+    if lowered not in ("concerns", "subjective", "subjective_review"):
+        return None
+    return ResolvedEntity(
+        kind="special_view",
+        pattern=pattern,
+        display_name=pattern,
+    )
+
+
+def _resolve_mechanical_dimension(pattern: str, lowered: str) -> ResolvedEntity | None:
+    lookup = _build_dimension_lookup()
+    detectors = lookup.get(lowered) or lookup.get(pattern.lower())
+    if not detectors:
+        return None
+    dim_display = pattern
+    for dim in DIMENSIONS:
+        dim_lowered = dim.name.lower().replace(" ", "_")
+        if dim.name.lower() == lowered or dim_lowered == lowered:
+            dim_display = dim.name
+            break
+    return ResolvedEntity(
+        kind="dimension",
+        pattern=pattern,
+        display_name=dim_display,
+        detectors=tuple(detectors),
+        is_subjective=False,
+    )
+
+
+def _resolve_subjective_dimension(
+    pattern: str,
+    lowered: str,
+    state: StateModel,
+) -> ResolvedEntity | None:
+    display_name = DISPLAY_NAMES.get(lowered)
+    if not display_name:
+        for key in state.get("dimension_scores") or {}:
+            if key.lower().replace(" ", "_") == lowered:
+                display_name = key
+                break
+    if not display_name:
+        return None
+    dim_data, display_name = _lookup_dimension_score(state, display_name)
+    is_subj = "subjective_assessment" in (
+        dim_data.get("detectors", {}) if isinstance(dim_data, dict) else {}
+    )
+    return ResolvedEntity(
+        kind="dimension",
+        pattern=pattern,
+        display_name=display_name,
+        detectors=(),
+        is_subjective=is_subj,
+    )
+
+
+def resolve_entity(pattern: str, state: StateModel) -> ResolvedEntity:
     """Classify a user pattern as a dimension, special view, or passthrough.
 
     Resolution priority:
@@ -36,51 +96,19 @@ def resolve_entity(pattern: str, state: dict) -> ResolvedEntity:
     lowered = pattern.strip().lower().replace(" ", "_")
 
     # 1. Special views
-    if lowered in ("concerns", "subjective", "subjective_review"):
-        return ResolvedEntity(
-            kind="special_view",
-            pattern=pattern,
-            display_name=pattern,
-        )
+    special_view = _resolve_special_view(pattern, lowered)
+    if special_view is not None:
+        return special_view
 
     # 2. Mechanical dimension (via DIMENSIONS list)
-    lookup = _build_dimension_lookup()
-    detectors = lookup.get(lowered)
-    if not detectors:
-        detectors = lookup.get(pattern.lower())
-    if detectors:
-        dim_display = pattern
-        for dim in scoring_mod.DIMENSIONS:
-            if dim.name.lower() == lowered or dim.name.lower().replace(" ", "_") == lowered:
-                dim_display = dim.name
-                break
-        return ResolvedEntity(
-            kind="dimension",
-            pattern=pattern,
-            display_name=dim_display,
-            detectors=tuple(detectors),
-            is_subjective=False,
-        )
+    mechanical = _resolve_mechanical_dimension(pattern, lowered)
+    if mechanical is not None:
+        return mechanical
 
     # 3. Subjective dimension (via DISPLAY_NAMES or dimension_scores)
-    display_name = scoring_mod.DISPLAY_NAMES.get(lowered)
-    if not display_name:
-        for key in state.get("dimension_scores") or {}:
-            if key.lower().replace(" ", "_") == lowered:
-                display_name = key
-                break
-    if display_name:
-        dim_data, display_name = _lookup_dimension_score(state, display_name)
-        is_subj = "subjective_assessment" in (
-            dim_data.get("detectors", {}) if isinstance(dim_data, dict) else {}
-        )
-        return ResolvedEntity(
-            kind="dimension",
-            pattern=pattern,
-            display_name=display_name,
-            detectors=(),
-            is_subjective=is_subj,
-        )
+    subjective = _resolve_subjective_dimension(pattern, lowered, state)
+    if subjective is not None:
+        return subjective
 
     # 4. Everything else
     return ResolvedEntity(
@@ -93,7 +121,7 @@ def resolve_entity(pattern: str, state: dict) -> ResolvedEntity:
 def _build_dimension_lookup() -> dict[str, list[str]]:
     """Build a map from dimension name/key (lowered) to detector names."""
     lookup: dict[str, list[str]] = {}
-    for dim in scoring_mod.DIMENSIONS:
+    for dim in DIMENSIONS:
         detectors = list(dim.detectors) if hasattr(dim, "detectors") else []
         lookup[dim.name.lower()] = detectors
         # Also index by underscore key: "file_health" -> detectors
@@ -101,11 +129,11 @@ def _build_dimension_lookup() -> dict[str, list[str]]:
         if key not in lookup:
             lookup[key] = detectors
     # Also add DISPLAY_NAMES reverse lookup (e.g. "abstraction_fit" -> "Abstraction Fit")
-    for key, display in scoring_mod.DISPLAY_NAMES.items():
+    for key, display in DISPLAY_NAMES.items():
         normalized_key = key.lower().replace(" ", "_")
         normalized_display = display.lower()
         # Find which dimension this belongs to via get_dimension_for_detector or direct name match
-        for dim in scoring_mod.DIMENSIONS:
+        for dim in DIMENSIONS:
             dim_lower = dim.name.lower()
             if normalized_display == dim_lower or normalized_key == dim_lower.replace(" ", "_"):
                 detectors = list(dim.detectors) if hasattr(dim, "detectors") else []
@@ -117,8 +145,8 @@ def _build_dimension_lookup() -> dict[str, list[str]]:
 
 
 def _lookup_dimension_score(
-    state: dict, display_name: str,
-) -> tuple[dict, str]:
+    state: StateModel, display_name: str,
+) -> tuple[dict[str, Any], str]:
     """Find dimension_scores entry with case-insensitive fallback.
 
     Returns (dim_data_dict, resolved_display_name).
@@ -136,14 +164,13 @@ def _lookup_dimension_score(
 
 def _detector_names_hint() -> str:
     """Return a compact list of detector names for the help message."""
-    from desloppify.core import registry as registry_mod
     names = getattr(registry_mod, "DISPLAY_ORDER", [])
     if names:
         return ", ".join(names[:10]) + (", ..." if len(names) > 10 else "")
     return "smells, structural, security, review, ..."
 
 
-def resolve_show_scope(args) -> tuple[bool, str | None, str, str | None]:
+def resolve_show_scope(args: object) -> tuple[bool, str | None, str, str | None]:
     """Resolve scope/pattern/status for a show invocation."""
     chronic = getattr(args, "chronic", False)
     pattern = args.pattern
@@ -164,34 +191,48 @@ def resolve_show_scope(args) -> tuple[bool, str | None, str, str | None]:
 
 
 def load_matches(
-    state: dict,
+    state: StateModel,
     *,
     scope: str | None,
     status_filter: str,
     chronic: bool,
-) -> list[dict]:
-    """Load matching findings from the ranked queue."""
+) -> list[dict[str, Any]]:
+    """Load matching issues from the ranked queue."""
     queue = build_work_queue(
         state,
         options=QueueBuildOptions(
             count=None,
-            scan_path=state.get("scan_path"),
             scope=scope,
             status=status_filter,
             include_subjective=False,
             chronic=chronic,
-            no_tier_fallback=True,
         ),
     )
-    return [item for item in queue.get("items", []) if item.get("kind") == "finding"]
+    return [item for item in queue.get("items", []) if item.get("kind") == "issue"]
 
 
-def resolve_noise(config: dict, matches: list[dict]):
-    """Apply detector/global noise budget to show matches."""
+def resolve_noise(
+    config: dict[str, Any],
+    matches: list[dict[str, Any]],
+    *,
+    no_budget: bool = False,
+) -> tuple[list[dict[str, Any]], dict[str, int], int, int, str | None]:
+    """Apply detector/global noise budget to show matches.
+
+    When *no_budget* is True, all matches are surfaced (nothing hidden).
+    """
+    if no_budget:
+        return (
+            matches,
+            {},
+            0,
+            0,
+            None,
+        )
     noise_budget, global_noise_budget, budget_warning = (
-        state_mod.resolve_finding_noise_settings(config)
+        state_mod.resolve_issue_noise_settings(config)
     )
-    surfaced_matches, hidden_by_detector = state_mod.apply_finding_noise_budget(
+    surfaced_matches, hidden_by_detector = state_mod.apply_issue_noise_budget(
         matches,
         budget=noise_budget,
         global_budget=global_noise_budget,

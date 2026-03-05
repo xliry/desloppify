@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from desloppify.core._internal.text_utils import get_area
+from desloppify.base.discovery.paths import get_area
 from desloppify.engine.policy.zones import COMMON_ZONE_RULES, Zone, ZoneRule
-from desloppify.hook_registry import register_lang_hooks
+from desloppify.engine.hook_registry import register_lang_hooks
 from desloppify.languages import register_lang
 from desloppify.languages._framework.base.phase_builders import (
     detector_phase_security,
@@ -24,7 +24,7 @@ from desloppify.languages.dart.extractors import (
     extract_functions,
     find_dart_files,
 )
-from desloppify.languages.dart.phases import _phase_coupling, _phase_structural
+from desloppify.languages.dart.phases import phase_coupling, phase_structural
 from desloppify.languages.dart.review import (
     HOLISTIC_REVIEW_DIMENSIONS,
     LOW_VALUE_PATTERN,
@@ -74,8 +74,8 @@ class DartConfig(LangConfig):
             entry_patterns=DART_ENTRY_PATTERNS,
             barrel_names={"index.dart"},
             phases=[
-                DetectorPhase("Structural analysis", _phase_structural),
-                DetectorPhase("Coupling + cycles + orphaned", _phase_coupling),
+                DetectorPhase("Structural analysis", phase_structural),
+                DetectorPhase("Coupling + cycles + orphaned", phase_coupling),
                 *all_treesitter_phases("dart"),
                 detector_phase_signature(),
                 detector_phase_test_coverage(),
@@ -104,3 +104,37 @@ class DartConfig(LangConfig):
             extract_functions=extract_functions,
             zone_rules=DART_ZONE_RULES,
         )
+
+__all__ = [
+    "get_area",
+    "COMMON_ZONE_RULES",
+    "Zone",
+    "ZoneRule",
+    "register_lang_hooks",
+    "register_lang",
+    "detector_phase_security",
+    "detector_phase_signature",
+    "detector_phase_test_coverage",
+    "shared_subjective_duplicates_tail",
+    "DetectorPhase",
+    "LangConfig",
+    "all_treesitter_phases",
+    "dart_test_coverage_hooks",
+    "get_detect_commands",
+    "build_dart_dep_graph",
+    "DART_FILE_EXCLUSIONS",
+    "extract_functions",
+    "find_dart_files",
+    "phase_coupling",
+    "phase_structural",
+    "HOLISTIC_REVIEW_DIMENSIONS",
+    "LOW_VALUE_PATTERN",
+    "MIGRATION_MIXED_EXTENSIONS",
+    "MIGRATION_PATTERN_PAIRS",
+    "REVIEW_GUIDANCE",
+    "api_surface",
+    "module_patterns",
+    "DART_ENTRY_PATTERNS",
+    "DART_ZONE_RULES",
+    "DartConfig",
+]

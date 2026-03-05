@@ -14,7 +14,7 @@ Bandit severity → desloppify tier/confidence mapping:
   LOW    → tier=3, confidence="low"
 
 The ``check_id`` in the entry detail is the bandit test ID (e.g., "B602") so
-findings are stable across reruns and can be wontfix-tracked by ID.
+issues are stable across reruns and can be wontfix-tracked by ID.
 """
 
 from __future__ import annotations
@@ -26,9 +26,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from desloppify.core._internal.text_utils import PROJECT_ROOT
+from desloppify.base.discovery.file_paths import rel
+from desloppify.base.discovery.paths import get_project_root
 from desloppify.engine.policy.zones import FileZoneMap, Zone
-from desloppify.core.discovery_api import rel
 from desloppify.languages._framework.base.types import DetectorCoverageStatus
 
 logger = logging.getLogger(__name__)
@@ -37,7 +37,7 @@ _SEVERITY_TO_TIER = {"HIGH": 4, "MEDIUM": 3, "LOW": 3}
 _SEVERITY_TO_CONFIDENCE = {"HIGH": "high", "MEDIUM": "medium", "LOW": "low"}
 
 # Bandit test IDs that overlap with the cross-language security detector
-# (secret names, hardcoded passwords). Skip these to avoid duplicate findings.
+# (secret names, hardcoded passwords). Skip these to avoid duplicate issues.
 _CROSS_LANG_OVERLAP = frozenset(
     {
         "B105",  # hardcoded_password_string
@@ -123,7 +123,7 @@ class BanditRunStatus:
 
 @dataclass(frozen=True)
 class BanditScanResult:
-    """Bandit findings plus typed execution status."""
+    """Bandit issues plus typed execution status."""
 
     entries: list[dict]
     files_scanned: int
@@ -135,14 +135,16 @@ def _to_security_entry(
     zone_map: FileZoneMap | None,
 ) -> dict | None:
     """Convert a single bandit result dict to a security entry, or None to skip."""
-    filepath = result.get("filename", "")
+    filepath = str(result.get("filename", "") or "")
     if not filepath:
         return None
 
+    rel_path = rel(filepath)
+
     # Apply zone filtering — only GENERATED and VENDOR are excluded for security.
     if zone_map is not None:
-        zone = zone_map.get(filepath)
-        if zone in (Zone.GENERATED, Zone.VENDOR):
+        zone = zone_map.get(rel_path)
+        if zone in (Zone.TEST, Zone.CONFIG, Zone.GENERATED, Zone.VENDOR):
             return None
 
     test_id = result.get("test_id", "")
@@ -162,10 +164,8 @@ def _to_security_entry(
     line = result.get("line_number", 0)
     summary = result.get("issue_text", "")
     test_name = result.get("test_name", test_id)
-    rel_path = rel(filepath)
-
     return {
-        "file": filepath,
+        "file": rel_path,
         "name": f"security::{test_id}::{rel_path}::{line}",
         "tier": tier,
         "confidence": confidence,
@@ -188,7 +188,7 @@ def detect_with_bandit(
     timeout: int = 120,
     exclude_dirs: list[str] | None = None,
 ) -> BanditScanResult:
-    """Run bandit on *path* and return findings + typed execution status.
+    """Run bandit on *path* and return issues + typed execution status.
 
     Parameters
     ----------
@@ -206,14 +206,14 @@ def detect_with_bandit(
     ]
     if exclude_dirs:
         cmd.extend(["--exclude", ",".join(exclude_dirs)])
-    cmd.append(str(path))
+    cmd.append(str(path.resolve()))
 
     try:
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
-            cwd=PROJECT_ROOT,
+            cwd=get_project_root(),
             timeout=timeout,
         )
     except FileNotFoundError:
@@ -273,7 +273,7 @@ def detect_with_bandit(
         if entry is not None:
             entries.append(entry)
 
-    logger.debug("bandit: %d findings from %d files", len(entries), files_scanned)
+    logger.debug("bandit: %d issues from %d files", len(entries), files_scanned)
     return BanditScanResult(
         entries=entries,
         files_scanned=files_scanned,

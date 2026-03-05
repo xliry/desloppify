@@ -5,7 +5,7 @@ from __future__ import annotations
 from ._constants import _history_strict
 
 
-def _compute_headline(
+def compute_headline(
     phase: str,
     dimensions: dict,
     debt: dict,
@@ -18,14 +18,14 @@ def _compute_headline(
     open_by_detector: dict | None = None,
 ) -> str | None:
     """Compute one computed sentence for terminal display."""
-    # Security callout prefix — prepended to any headline when security findings exist
+    # Security callout prefix — prepended to any headline when security issues exist
     security_count = (open_by_detector or {}).get("security", 0)
     security_prefix = ""
     if security_count > 0:
         s = "s" if security_count != 1 else ""
-        security_prefix = f"\u26a0 {security_count} security finding{s} — review before other cleanup. "
+        security_prefix = f"\u26a0 {security_count} security issue{s} — review before other cleanup. "
 
-    # Review findings callout — all phases
+    # Review issues callout — all phases
     review_count = (open_by_detector or {}).get("review", 0)
     review_suffix = ""
     if review_count > 0:
@@ -33,10 +33,10 @@ def _compute_headline(
         uninvestigated = (open_by_detector or {}).get("review_uninvestigated", 0)
         if uninvestigated > 0:
             review_suffix = (
-                f" ({review_count} review finding{s} \u2014 run `desloppify show review --status open`)"
+                f" ({review_count} review issue{s} \u2014 run `desloppify show review --status open`)"
             )
         else:
-            review_suffix = f" ({review_count} review finding{s} pending)"
+            review_suffix = f" ({review_count} review issue{s} pending)"
 
     headline = _compute_headline_inner(
         phase, dimensions, debt, milestone, diff, obj_strict, obj_score, stats, history
@@ -46,7 +46,6 @@ def _compute_headline(
         return None
     parts = security_prefix + (headline or "") + review_suffix
     return parts or None
-
 
 def _compute_headline_inner(
     phase: str,
@@ -69,8 +68,8 @@ def _compute_headline_inner(
         dims = len(dimensions.get("lowest_dimensions", [])) if dimensions else 0
         open_count = stats.get("open", 0)
         if dims:
-            return f"First scan complete. {open_count} open findings across {dims} dimensions."
-        return f"First scan complete. {open_count} findings detected."
+            return f"First scan complete. {open_count} open issues across {dims} dimensions."
+        return f"First scan complete. {open_count} issues detected."
 
     # Regression — acknowledge that drops after fixes are normal
     if phase == "regression":
@@ -118,7 +117,7 @@ def _compute_headline_inner(
         top = lowest[0]
         return (
             f"{top['name']} is your biggest lever: "
-            f"{top['issues']} items → +{top['impact']} pts"
+            f"{top['failing']} items → +{top['impact']} pts"
         )
 
     # Gap callout
@@ -143,15 +142,15 @@ def _compute_headline_inner(
         if lowest:
             top = lowest[0]
             return (
-                f"{open_count} findings open. {top['name']} ({top['strict']}%) "
+                f"{open_count} issues open. {top['name']} ({top['strict']}%) "
                 f"needs attention — run `desloppify next` to start."
             )
         if open_count > 0:
-            return f"{open_count} findings open. Run `desloppify next` for the highest-priority item."
+            return f"{open_count} issues open. Run `desloppify next` for the highest-priority item."
 
     # Early momentum fallback — celebrate trajectory
     if phase == "early_momentum" and strict_score is not None:
         open_count = stats.get("open", 0)
-        return f"Score {strict_score:.1f}/100 with {open_count} findings open. Keep the momentum going."
+        return f"Score {strict_score:.1f}/100 with {open_count} issues open. Keep the momentum going."
 
     return None

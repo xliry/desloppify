@@ -5,7 +5,7 @@ import logging
 import re
 from pathlib import Path
 
-from desloppify.core._internal.text_utils import PROJECT_ROOT
+from desloppify.base.discovery.paths import get_project_root
 from desloppify.engine.detectors.base import FunctionInfo
 from desloppify.languages.typescript.extractors_components import (
     detect_passthrough_components,
@@ -96,26 +96,13 @@ def _parse_param_names(param_str: str) -> list[str]:
     return names
 
 
-def _extract_ts_return_annotation(sig: str) -> str | None:
-    """Extract normalized return annotation from TS/TSX function signatures."""
-    # function foo(...): Type {
-    m = re.search(r"\)\s*:\s*(.+?)\s*\{", sig, re.DOTALL)
-    if not m:
-        # const foo = (...): Type =>
-        m = re.search(r"\)\s*:\s*(.+?)\s*=>", sig, re.DOTALL)
-    if not m:
-        return None
-    annotation = " ".join(m.group(1).split())
-    return annotation or None
-
-
 def extract_ts_functions(filepath: str) -> list[FunctionInfo]:
     """Extract function/component bodies from a TS/TSX file.
 
     Uses brace-tracking to determine function boundaries.
     Returns FunctionInfo with normalized body and hash for comparison.
     """
-    p = Path(filepath) if Path(filepath).is_absolute() else PROJECT_ROOT / filepath
+    p = Path(filepath) if Path(filepath).is_absolute() else get_project_root() / filepath
     try:
         content = p.read_text()
     except (OSError, UnicodeDecodeError) as exc:

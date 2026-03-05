@@ -21,3 +21,8 @@ generic_lang(
     detect_markers=["Gemfile"],
     treesitter_spec=RUBY_SPEC,
 )
+
+__all__ = [
+    "generic_lang",
+    "RUBY_SPEC",
+]

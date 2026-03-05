@@ -6,7 +6,7 @@ into the entry dicts expected by detect_dead_exports().
 Knip understands re-exports, barrel files, dynamic imports, and entry points —
 far more accurate than the old grep-based approach.
 
-Returns None when Knip is not installed, so the caller gets [] findings rather
+Returns None when Knip is not installed, so the caller gets [] issues rather
 than a crash.
 """
 
@@ -17,7 +17,7 @@ import logging
 import subprocess
 from pathlib import Path
 
-from desloppify.core.discovery_api import rel
+from desloppify.base.discovery.file_paths import rel
 
 logger = logging.getLogger(__name__)
 

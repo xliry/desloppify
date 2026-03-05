@@ -12,15 +12,26 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-from desloppify.core._internal.text_utils import PROJECT_ROOT, strip_c_style_comments
-from desloppify.core.discovery_api import (
-    find_ts_files,
-    read_file_text,
+from desloppify.base.discovery.file_paths import (
+
     rel,
+
     resolve_path,
+
     safe_write_text,
+
 )
-from desloppify.core.output_api import colorize, print_table
+
+from desloppify.base.discovery.source import (
+
+    find_ts_files,
+
+    read_file_text,
+
+)
+from desloppify.base.output.terminal import colorize, print_table
+from desloppify.base.discovery.paths import get_project_root
+from desloppify.base.text_utils import strip_c_style_comments
 
 TS6133_RE = re.compile(
     r"^(.+)\((\d+),(\d+)\): error TS6133: '(\S+)' is declared but its value is never read\."
@@ -101,7 +112,7 @@ def _detect_unused_fallback(path: Path, category: str) -> tuple[list[dict], int]
     entries: list[dict] = []
 
     for filepath in files:
-        full = Path(filepath) if Path(filepath).is_absolute() else PROJECT_ROOT / filepath
+        full = Path(filepath) if Path(filepath).is_absolute() else get_project_root() / filepath
         raw = read_file_text(str(full))
         if raw is None:
             continue
@@ -163,7 +174,7 @@ def _contains_deno_markers(path: Path) -> bool:
     """
     markers = ("deno.json", "deno.jsonc", "import_map.json")
     current = path.resolve()
-    root = PROJECT_ROOT.resolve()
+    root = get_project_root().resolve()
     for parent in (current, *current.parents):
         for marker in markers:
             if (parent / marker).is_file():
@@ -175,7 +186,7 @@ def _contains_deno_markers(path: Path) -> bool:
 
 def _has_deno_import_syntax(ts_files: list[str]) -> bool:
     for filepath in ts_files:
-        full = Path(filepath) if Path(filepath).is_absolute() else PROJECT_ROOT / filepath
+        full = Path(filepath) if Path(filepath).is_absolute() else get_project_root() / filepath
         content = read_file_text(str(full))
         if content and _DENO_IMPORT_RE.search(content):
             return True
@@ -206,7 +217,7 @@ def detect_unused(path: Path, category: str = "all") -> tuple[list[dict], int]:
             "noUnusedParameters": True,
         },
     }
-    tmp_path = PROJECT_ROOT / "tsconfig.desloppify.json"
+    tmp_path = get_project_root() / "tsconfig.desloppify.json"
     try:
         safe_write_text(tmp_path, json.dumps(tmp_tsconfig, indent=2))
         try:
@@ -214,7 +225,7 @@ def detect_unused(path: Path, category: str = "all") -> tuple[list[dict], int]:
                 ["npx", "tsc", "--project", str(tmp_path), "--noEmit"],
                 capture_output=True,
                 text=True,
-                cwd=PROJECT_ROOT,
+                cwd=get_project_root(),
                 timeout=120,
                 shell=(sys.platform == "win32"),
             )
@@ -268,7 +279,7 @@ def detect_unused(path: Path, category: str = "all") -> tuple[list[dict], int]:
 
 def _categorize_unused(filepath: str, lineno: int) -> str:
     try:
-        p = Path(filepath) if Path(filepath).is_absolute() else PROJECT_ROOT / filepath
+        p = Path(filepath) if Path(filepath).is_absolute() else get_project_root() / filepath
         lines = p.read_text().splitlines()
         if lineno <= len(lines):
             src_line = lines[lineno - 1].strip()

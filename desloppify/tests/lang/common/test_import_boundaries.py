@@ -35,19 +35,21 @@ def test_detectors_layer_does_not_import_lang_layer():
 
 
 def test_review_cmd_uses_split_modules():
-    entrypoint_src = Path("desloppify/app/commands/review/entrypoint.py").read_text()
-    assert "from .batch import _do_run_batches" in entrypoint_src
-    assert "from .import_cmd import do_import" in entrypoint_src
+    entrypoint_src = Path("desloppify/app/commands/review/cmd.py").read_text()
+    assert "from .batch.orchestrator import" in entrypoint_src
+    assert "do_run_batches" in entrypoint_src
+    assert "do_import_run" in entrypoint_src
+    assert "from .importing.cmd import do_import" in entrypoint_src
     assert "from .prepare import do_prepare" in entrypoint_src
-    # registry imports uniformly from command package roots.
+    # registry imports command handlers directly from implementation modules.
     registry_src = Path("desloppify/app/commands/registry.py").read_text()
-    assert "from desloppify.app.commands.review import cmd_review" in registry_src
+    assert "from desloppify.app.commands.review.cmd import cmd_review" in registry_src
 
 
 def test_scan_reporting_aggregator_uses_split_modules():
-    src = Path("desloppify/app/commands/scan/scan_reporting_dimensions.py").read_text()
-    assert "scan_reporting_presentation as presentation_mod" in src
-    assert "scan_reporting_subjective import" in src
+    src = Path("desloppify/app/commands/scan/reporting/dimensions.py").read_text()
+    assert "from . import presentation as presentation_mod" in src
+    assert "from desloppify.app.commands.scan.reporting.subjective import" in src
 
 
 def test_scan_subjective_paths_aggregator_removed():

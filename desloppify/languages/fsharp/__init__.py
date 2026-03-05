@@ -20,3 +20,8 @@ generic_lang(
     detect_markers=["*.fsproj"],
     treesitter_spec=FSHARP_SPEC,
 )
+
+__all__ = [
+    "generic_lang",
+    "FSHARP_SPEC",
+]

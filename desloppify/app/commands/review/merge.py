@@ -1,28 +1,64 @@
-"""Merge conceptually duplicate open review findings."""
+"""Merge conceptually duplicate open review issues."""
 
 from __future__ import annotations
 
 import argparse
+from typing import Any, TypedDict
 
 from desloppify import state as state_mod
 from desloppify.app.commands.helpers.query import write_query
+from desloppify.app.commands.helpers.queue_progress import show_score_with_plan_context
 from desloppify.app.commands.helpers.runtime import command_runtime
-from desloppify.app.commands.helpers.score_update import print_score_update
-from desloppify.core.issues_render import finding_weight
-from desloppify.core.output_api import colorize
-from desloppify.engine.work_queue import list_open_review_findings
-from desloppify.intelligence.narrative import NarrativeContext, compute_narrative
+from desloppify.base.output.issues import issue_weight
+from desloppify.base.output.terminal import colorize
+from desloppify.engine._work_queue.issues import list_open_review_issues
+from desloppify.intelligence.narrative.core import NarrativeContext, compute_narrative
+from desloppify.intelligence.review.issue_merge import (
+    merge_list_fields,
+    normalize_word_set,
+    pick_longer_text,
+    track_merged_from,
+)
 from desloppify.state import save_state, utc_now
 
 
-def _word_set(text: str) -> set[str]:
-    words = "".join(ch.lower() if ch.isalnum() else " " for ch in text).split()
-    return {word for word in words if len(word) >= 3}
+class ResolutionAttestationPayload(TypedDict, total=False):
+    """Resolution metadata attached to auto-resolved duplicate issues."""
+
+    kind: str
+    text: str
+    attested_at: str
+    scan_verified: bool
+
+
+class ReviewIssueDetailPayload(TypedDict, total=False):
+    """Issue detail fields used by conceptual merge logic."""
+
+    holistic: bool
+    dimension: str
+    related_files: list[str]
+    evidence: list[str]
+    suggestion: str
+    merged_from: list[str]
+    merged_at: str
+
+
+class ReviewIssueStatePayload(TypedDict, total=False):
+    """Open review issue contract used during merge grouping and resolution."""
+
+    id: str
+    detector: str
+    summary: str
+    detail: ReviewIssueDetailPayload
+    status: str
+    resolved_at: str
+    note: str
+    resolution_attestation: ResolutionAttestationPayload | dict[str, Any]
 
 
 def _summary_similarity(a: str, b: str) -> float:
-    left = _word_set(a)
-    right = _word_set(b)
+    left = normalize_word_set(a)
+    right = normalize_word_set(b)
     if not left or not right:
         return 0.0
     overlap = len(left & right)
@@ -30,8 +66,8 @@ def _summary_similarity(a: str, b: str) -> float:
     return float(overlap) / float(union) if union else 0.0
 
 
-def _parse_holistic_identifier(finding_id: str) -> str:
-    parts = [part for part in str(finding_id).split("::") if part]
+def _parse_holistic_identifier(issue_id: str) -> str:
+    parts = [part for part in str(issue_id).split("::") if part]
     if len(parts) < 2:
         return ""
     candidate = parts[-2].strip()
@@ -40,16 +76,16 @@ def _parse_holistic_identifier(finding_id: str) -> str:
     return candidate
 
 
-def _related_files_set(finding: dict) -> set[str]:
-    related = finding.get("detail", {}).get("related_files", [])
+def _related_files_set(issue: ReviewIssueStatePayload) -> set[str]:
+    related = issue.get("detail", {}).get("related_files", [])
     if not isinstance(related, list):
         return set()
     return {str(path).strip() for path in related if str(path).strip()}
 
 
 def _same_issue_concept(
-    left: dict,
-    right: dict,
+    left: ReviewIssueStatePayload,
+    right: ReviewIssueStatePayload,
     *,
     similarity_threshold: float,
 ) -> bool:
@@ -58,68 +94,51 @@ def _same_issue_concept(
     if left_detail.get("dimension") != right_detail.get("dimension"):
         return False
 
-    left_identifier = _parse_holistic_identifier(left.get("id", ""))
-    right_identifier = _parse_holistic_identifier(right.get("id", ""))
-    if left_identifier and right_identifier and left_identifier == right_identifier:
-        return True
-
     left_summary = str(left.get("summary", "")).strip()
     right_summary = str(right.get("summary", "")).strip()
     similarity = _summary_similarity(left_summary, right_summary)
-    if similarity < similarity_threshold:
-        return False
 
     left_files = _related_files_set(left)
     right_files = _related_files_set(right)
-    if left_files and right_files and not (left_files & right_files):
+    files_overlap = not left_files or not right_files or bool(left_files & right_files)
+
+    left_identifier = _parse_holistic_identifier(left.get("id", ""))
+    right_identifier = _parse_holistic_identifier(right.get("id", ""))
+    if left_identifier and right_identifier and left_identifier == right_identifier:
+        # Identifier match still requires at least one corroborating signal
+        return similarity >= 0.3 or files_overlap
+
+    if similarity < similarity_threshold:
+        return False
+    if not files_overlap:
         return False
     return True
 
 
-def _merge_finding_details(primary: dict, duplicate: dict) -> None:
+def _merge_issue_details(
+    primary: ReviewIssueStatePayload,
+    duplicate: ReviewIssueStatePayload,
+) -> None:
     primary_detail = primary.setdefault("detail", {})
     duplicate_detail = duplicate.get("detail", {})
 
-    for field in ("related_files", "evidence"):
-        merged: list[str] = []
-        seen: set[str] = set()
-        for source in (primary_detail.get(field), duplicate_detail.get(field)):
-            if not isinstance(source, list):
-                continue
-            for item in source:
-                value = str(item).strip()
-                if not value or value in seen:
-                    continue
-                seen.add(value)
-                merged.append(value)
-        if merged:
-            primary_detail[field] = merged
-
-    primary_suggestion = str(primary_detail.get("suggestion", "")).strip()
-    duplicate_suggestion = str(duplicate_detail.get("suggestion", "")).strip()
-    if len(duplicate_suggestion) > len(primary_suggestion):
-        primary_detail["suggestion"] = duplicate_suggestion
-
-    merged_from = primary_detail.get("merged_from")
-    if not isinstance(merged_from, list):
-        merged_from = []
-    duplicate_id = duplicate.get("id", "")
-    if duplicate_id and duplicate_id not in merged_from:
-        merged_from.append(duplicate_id)
-    if merged_from:
-        primary_detail["merged_from"] = merged_from
+    merge_list_fields(primary_detail, duplicate_detail, ("related_files", "evidence"))
+    pick_longer_text(primary_detail, duplicate_detail, "suggestion")
+    track_merged_from(primary_detail, duplicate.get("id", ""))
 
 
 def do_merge(args: argparse.Namespace) -> None:
-    """Merge conceptually duplicate open review findings."""
+    """Merge conceptually duplicate open review issues."""
     runtime = command_runtime(args)
     state = runtime.state
     state_file = runtime.state_path
     narrative = compute_narrative(state, context=NarrativeContext(command="review"))
-    items = list_open_review_findings(state)
+    items: list[ReviewIssueStatePayload] = [
+        issue for issue in list_open_review_issues(state) if isinstance(issue, dict)
+    ]
 
     if not items:
-        print(colorize("\n  No review findings open.\n", "dim"))
+        print(colorize("\n  No review issues open.\n", "dim"))
         return
 
     try:
@@ -129,17 +148,17 @@ def do_merge(args: argparse.Namespace) -> None:
     similarity = max(0.0, min(1.0, similarity))
 
     open_holistic = [
-        finding
-        for finding in items
-        if finding.get("detector") == "review"
-        and finding.get("detail", {}).get("holistic")
+        issue
+        for issue in items
+        if issue.get("detector") == "review"
+        and issue.get("detail", {}).get("holistic")
     ]
     if len(open_holistic) < 2:
-        print(colorize("\n  Not enough holistic review findings to merge.\n", "dim"))
+        print(colorize("\n  Not enough holistic review issues to merge.\n", "dim"))
         return
 
     consumed: set[str] = set()
-    merge_groups: list[list[dict]] = []
+    merge_groups: list[list[ReviewIssueStatePayload]] = []
     for candidate in open_holistic:
         candidate_id = candidate.get("id", "")
         if not candidate_id or candidate_id in consumed:
@@ -176,7 +195,7 @@ def do_merge(args: argparse.Namespace) -> None:
     for group in merge_groups:
         ranked = sorted(
             group,
-            key=lambda finding: (finding_weight(finding)[0], finding.get("id", "")),
+            key=lambda issue: (issue_weight(issue)[0], issue.get("id", "")),
             reverse=True,
         )
         primary = ranked[0]
@@ -185,13 +204,13 @@ def do_merge(args: argparse.Namespace) -> None:
         if dry_run:
             continue
         for duplicate in duplicates:
-            _merge_finding_details(primary, duplicate)
+            _merge_issue_details(primary, duplicate)
             duplicate["status"] = "auto_resolved"
             duplicate["resolved_at"] = timestamp
             duplicate["note"] = f"merged into {primary.get('id', '')}"
             duplicate["resolution_attestation"] = {
                 "kind": "issue_merge",
-                "text": "Merged conceptually duplicate review finding",
+                "text": "Merged conceptually duplicate review issue",
                 "attested_at": timestamp,
                 "scan_verified": False,
             }
@@ -201,7 +220,7 @@ def do_merge(args: argparse.Namespace) -> None:
     print(
         colorize(
             f"\n  Merge groups: {len(merge_groups)} | "
-            f"duplicate findings: {sum(len(group) - 1 for group in merge_groups)}",
+            f"duplicate issues: {sum(len(group) - 1 for group in merge_groups)}",
             "bold",
         )
     )
@@ -218,7 +237,7 @@ def do_merge(args: argparse.Namespace) -> None:
 
     save_state(state, state_file)
     print(colorize("\n  State updated with merged issue groups.", "green"))
-    print_score_update(state, prev)
+    show_score_with_plan_context(state, prev)
     write_query(
         {
             "command": "review",

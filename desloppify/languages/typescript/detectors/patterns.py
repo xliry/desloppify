@@ -10,7 +10,7 @@ Only COMPETING patterns (multiple approaches to the same decision) are flagged:
   different tradeoffs. An area using 2+ suggests fragmentation or migration debt.
 
 All families are included in the census (raw `detect patterns` command shows everything).
-Only competing families produce findings for the scan pipeline.
+Only competing families produce issues for the scan pipeline.
 """
 
 import argparse
@@ -20,11 +20,19 @@ import re
 from collections import defaultdict
 from pathlib import Path
 
-from desloppify.core._internal.text_utils import get_area
-from desloppify.core.fallbacks import log_best_effort_failure
-from desloppify.core.discovery_api import find_ts_files, rel, resolve_path
+from desloppify.base.discovery.file_paths import (
+
+    rel,
+
+    resolve_path,
+
+)
+
+from desloppify.base.discovery.source import find_ts_files
+from desloppify.base.output.fallbacks import log_best_effort_failure
+from desloppify.base.output.terminal import colorize, print_table
+from desloppify.base.discovery.paths import get_area
 from desloppify.languages.typescript.detectors.contracts import DetectorResult
-from desloppify.core.output_api import colorize, print_table
 
 # ── Pattern families ────────────────────────────────────────────
 #

@@ -6,8 +6,8 @@ import logging
 import re
 from pathlib import Path
 
-from desloppify.core.fallbacks import log_best_effort_failure
-from desloppify.core.signal_patterns import SERVICE_ROLE_TOKEN_RE, is_server_only_path
+from desloppify.base.output.fallbacks import log_best_effort_failure
+from desloppify.base.signal_patterns import SERVICE_ROLE_TOKEN_RE, is_server_only_path
 from desloppify.engine.detectors.security import rules as security_detector_mod
 from desloppify.engine.policy.zones import FileZoneMap, Zone
 from desloppify.languages.typescript.detectors.contracts import DetectorResult
@@ -121,7 +121,7 @@ def detect_ts_security_result(
             if stripped.startswith("//"):
                 continue
             entries.extend(
-                _line_security_findings(
+                _line_security_issues(
                     filepath=filepath,
                     normalized_path=normalized_path,
                     lines=lines,
@@ -133,7 +133,7 @@ def detect_ts_security_result(
             )
 
         entries.extend(
-            _file_level_security_findings(
+            _file_level_security_issues(
                 filepath=filepath,
                 normalized_path=normalized_path,
                 lines=lines,
@@ -144,7 +144,7 @@ def detect_ts_security_result(
     return DetectorResult(entries=entries, population_kind="files", population_size=scanned)
 
 
-def _line_security_findings(
+def _line_security_issues(
     *,
     filepath: str,
     normalized_path: str,
@@ -154,13 +154,13 @@ def _line_security_findings(
     is_server_only: bool,
     has_dev_guard: bool,
 ) -> list[dict]:
-    """Detect per-line security patterns and return findings."""
-    line_findings: list[dict] = []
+    """Detect per-line security patterns and return issues."""
+    line_issues: list[dict] = []
 
     if _CREATE_CLIENT_RE.search(line):
         context = "\n".join(lines[max(0, line_num - 3) : min(len(lines), line_num + 3)])
         if SERVICE_ROLE_TOKEN_RE.search(context) and not is_server_only:
-            line_findings.append(
+            line_issues.append(
                 _make_security_entry(
                     filepath,
                     line_num,
@@ -174,7 +174,7 @@ def _line_security_findings(
             )
 
     if _EVAL_PATTERNS.search(line):
-        line_findings.append(
+        line_issues.append(
             _make_security_entry(
                 filepath,
                 line_num,
@@ -188,7 +188,7 @@ def _line_security_findings(
         )
 
     if _DANGEROUS_HTML_RE.search(line):
-        line_findings.append(
+        line_issues.append(
             _make_security_entry(
                 filepath,
                 line_num,
@@ -202,7 +202,7 @@ def _line_security_findings(
         )
 
     if _INNER_HTML_RE.search(line):
-        line_findings.append(
+        line_issues.append(
             _make_security_entry(
                 filepath,
                 line_num,
@@ -218,7 +218,7 @@ def _line_security_findings(
     if _DEV_CRED_RE.search(line):
         is_dev_file = "/dev/" in normalized_path or "dev." in Path(filepath).name
         if not (is_dev_file and has_dev_guard):
-            line_findings.append(
+            line_issues.append(
                 _make_security_entry(
                     filepath,
                     line_num,
@@ -232,7 +232,7 @@ def _line_security_findings(
             )
 
     if _OPEN_REDIRECT_RE.search(line):
-        line_findings.append(
+        line_issues.append(
             _make_security_entry(
                 filepath,
                 line_num,
@@ -248,7 +248,7 @@ def _line_security_findings(
     if _ATOB_JWT_RE.search(line):
         context = "\n".join(lines[max(0, line_num - 3) : min(len(lines), line_num + 3)])
         if _JWT_PAYLOAD_RE.search(context):
-            line_findings.append(
+            line_issues.append(
                 _make_security_entry(
                     filepath,
                     line_num,
@@ -261,22 +261,22 @@ def _line_security_findings(
                 )
             )
 
-    return line_findings
+    return line_issues
 
 
-def _file_level_security_findings(
+def _file_level_security_issues(
     *,
     filepath: str,
     normalized_path: str,
     lines: list[str],
     content: str,
 ) -> list[dict]:
-    """Detect file-level security patterns and return findings."""
-    file_findings: list[dict] = []
+    """Detect file-level security patterns and return issues."""
+    file_issues: list[dict] = []
 
     if _looks_like_edge_handler(normalized_path, content):
-        if not _AUTH_CHECK_RE.search(content):
-            file_findings.append(
+        if not _handler_has_auth_check(content):
+            file_issues.append(
                 _make_security_entry(
                     filepath,
                     1,
@@ -289,10 +289,10 @@ def _file_level_security_findings(
                 )
             )
 
-    _check_json_parse_unguarded(filepath, lines, file_findings)
+    _check_json_parse_unguarded(filepath, lines, file_issues)
     if filepath.endswith(".sql"):
-        _check_rls_bypass(filepath, content, lines, file_findings)
-    return file_findings
+        _check_rls_bypass(filepath, content, lines, file_issues)
+    return file_issues
 
 
 def _looks_like_edge_handler(normalized_path: str, content: str) -> bool:
@@ -300,6 +300,47 @@ def _looks_like_edge_handler(normalized_path: str, content: str) -> bool:
     in_edge_tree = "/functions/" in normalized_path.replace("\\", "/")
     has_edge_entrypoint = bool(_SERVE_ASYNC_RE.search(content) or _EDGE_ENTRYPOINT_RE.search(content))
     return in_edge_tree and has_edge_entrypoint
+
+
+def _extract_handler_body(content: str) -> str | None:
+    """Extract the body of the first serve() or exported handler function.
+
+    Uses brace-depth tracking to find the handler callback scope.
+    Returns the handler body text, or None if not found.
+    """
+    # Try serve(async (req) => { ... }) or serve(async function(req) { ... })
+    match = _SERVE_ASYNC_RE.search(content)
+    if not match:
+        match = _EDGE_ENTRYPOINT_RE.search(content)
+    if not match:
+        return None
+
+    # Find the first opening brace after the match
+    start = match.end()
+    brace_pos = content.find("{", start)
+    if brace_pos == -1:
+        return None
+
+    # Track brace depth to find the matching close brace
+    depth = 0
+    for i in range(brace_pos, len(content)):
+        ch = content[i]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return content[brace_pos : i + 1]
+    return None
+
+
+def _handler_has_auth_check(content: str) -> bool:
+    """Check if auth patterns exist inside the handler body, not just anywhere in the file."""
+    handler_body = _extract_handler_body(content)
+    if handler_body is None:
+        # Fallback to file-level check if we can't parse handler boundaries
+        return bool(_AUTH_CHECK_RE.search(content))
+    return bool(_AUTH_CHECK_RE.search(handler_body))
 
 
 def _is_in_try_scope(lines: list[str], target_line: int) -> bool:

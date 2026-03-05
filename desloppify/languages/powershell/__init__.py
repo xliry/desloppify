@@ -22,3 +22,8 @@ generic_lang(
     depth="minimal",
     treesitter_spec=POWERSHELL_SPEC,
 )
+
+__all__ = [
+    "generic_lang",
+    "POWERSHELL_SPEC",
+]

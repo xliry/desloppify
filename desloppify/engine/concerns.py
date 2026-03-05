@@ -1,7 +1,7 @@
-"""Concern generators — mechanical findings → subjective review bridge.
+"""Concern generators — mechanical issues → subjective review bridge.
 
 Concerns are ephemeral: computed on-demand from current state, never persisted.
-Only LLM-confirmed concerns become persistent Finding objects via review import.
+Only LLM-confirmed concerns become persistent Issue objects via review import.
 
 Generators focus on cross-cutting synthesis — bundling all signals per file so
 the LLM gets a complete picture, and surfacing systemic patterns across files
@@ -11,11 +11,27 @@ that no single detector captures.
 from __future__ import annotations
 
 import hashlib
+import re
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Literal, TypedDict, cast
+from typing import Any, Literal, TypedDict
 
-from desloppify.core.registry import JUDGMENT_DETECTORS
+from desloppify.base.registry import JUDGMENT_DETECTORS
+from desloppify.engine._state.schema import StateModel
+from desloppify.engine.detectors.base import (
+    ELEVATED_LOC_THRESHOLD,
+    ELEVATED_NESTING_THRESHOLD,
+    ELEVATED_PARAMS_THRESHOLD,
+)
+
+# ── Concern thresholds ──────────────────────────────────
+ELEVATED_MAX_PARAMS = ELEVATED_PARAMS_THRESHOLD
+ELEVATED_MAX_NESTING = ELEVATED_NESTING_THRESHOLD
+ELEVATED_LOC = ELEVATED_LOC_THRESHOLD
+MIN_DETECTORS_FOR_MIXED = 3
+MIN_FILES_FOR_SYSTEMIC = 3
+MIN_FILES_FOR_SMELL_PATTERN = 5
 
 
 @dataclass(frozen=True)
@@ -28,11 +44,11 @@ class Concern:
     evidence: tuple[str, ...]  # supporting data points
     question: str  # specific question for LLM to evaluate
     fingerprint: str  # stable hash for dismissal tracking
-    source_findings: tuple[str, ...]  # finding IDs that triggered this
+    source_issues: tuple[str, ...]  # issue IDs that triggered this
 
 
 class ConcernSignals(TypedDict, total=False):
-    """Typed signal payload extracted from mechanical findings."""
+    """Typed signal payload extracted from mechanical issues."""
 
     max_params: float
     max_nesting: float
@@ -42,7 +58,6 @@ class ConcernSignals(TypedDict, total=False):
     monster_funcs: list[str]
 
 
-_NUMERIC_SIGNAL_KEYS = ("max_params", "max_nesting", "loc", "function_count")
 SignalKey = Literal["max_params", "max_nesting", "loc", "function_count", "monster_loc"]
 
 
@@ -61,29 +76,29 @@ def _fingerprint(concern_type: str, file: str, key_signals: tuple[str, ...]) -> 
 
 
 def _is_dismissed(
-    dismissals: dict, fingerprint: str, source_finding_ids: tuple[str, ...]
+    dismissals: dict, fingerprint: str, source_issue_ids: tuple[str, ...]
 ) -> bool:
-    """Check if a concern was previously dismissed and source findings unchanged."""
+    """Check if a concern was previously dismissed and source issues unchanged."""
     entry = dismissals.get(fingerprint)
     if not isinstance(entry, dict):
         return False
-    prev_sources = set(entry.get("source_finding_ids", []))
-    return prev_sources == set(source_finding_ids)
+    prev_sources = set(entry.get("source_issue_ids", []))
+    return prev_sources == set(source_issue_ids)
 
 
-def _open_findings(state: dict[str, Any]) -> list[dict[str, Any]]:
-    """Return all open findings from state."""
-    findings = state.get("findings", {})
+def _open_issues(state: StateModel) -> list[dict[str, Any]]:
+    """Return all open issues from state."""
+    issues = state.get("issues", {})
     return [
-        f for f in findings.values()
+        f for f in issues.values()
         if isinstance(f, dict) and f.get("status") == "open"
     ]
 
 
-def _group_by_file(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
-    """Group open findings by file, excluding holistic (file='.')."""
+def _group_by_file(state: StateModel) -> dict[str, list[dict[str, Any]]]:
+    """Group open issues by file, excluding holistic (file='.')."""
     by_file: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for f in _open_findings(state):
+    for f in _open_issues(state):
         file = f.get("file", "")
         if file and file != ".":
             by_file[file].append(f)
@@ -93,21 +108,49 @@ def _group_by_file(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
 # ── Signal extraction ────────────────────────────────────────────────
 
 
-def _extract_signals(findings: list[dict[str, Any]]) -> ConcernSignals:
-    """Extract key quantitative signals from a file's findings."""
+def _parse_complexity_signals(detail: dict[str, Any]) -> dict[str, float]:
+    """Parse complexity_signals strings into numeric values.
+
+    Structural detail dicts store complexity signals as strings like
+    "12 params" and "nesting depth 8" in the ``complexity_signals``
+    list.  Extract max_params and max_nesting from those labels so
+    the concern generator can evaluate thresholds.
+    """
+    result: dict[str, float] = {}
+    raw_signals = detail.get("complexity_signals", [])
+    if not isinstance(raw_signals, list):
+        return result
+
+    for sig in raw_signals:
+        if not isinstance(sig, str):
+            continue
+        m = re.search(r"(\d+)\s*params", sig)
+        if m:
+            result["max_params"] = max(result.get("max_params", 0), float(m.group(1)))
+        m = re.search(r"nesting depth\s*(\d+)", sig)
+        if m:
+            result["max_nesting"] = max(result.get("max_nesting", 0), float(m.group(1)))
+    return result
+
+
+def _extract_signals(issues: list[dict[str, Any]]) -> ConcernSignals:
+    """Extract key quantitative signals from a file's issues."""
     signals: ConcernSignals = {}
     monster_funcs: list[str] = []
 
-    for f in findings:
+    for f in issues:
         det = f.get("detector", "")
         detail_raw = f.get("detail", {})
         detail = detail_raw if isinstance(detail_raw, dict) else {}
 
         if det == "structural":
-            s = detail.get("signals", {})
-            if isinstance(s, dict):
-                for key in _NUMERIC_SIGNAL_KEYS:
-                    _update_max_signal(signals, cast(SignalKey, key), s.get(key, 0))
+            # Read loc directly from the flat detail dict.
+            _update_max_signal(signals, "loc", detail.get("loc", 0))
+            # Parse complexity_signals strings for params/nesting.
+            parsed = _parse_complexity_signals(detail)
+            for key in ("max_params", "max_nesting"):
+                if key in parsed:
+                    _update_max_signal(signals, key, parsed[key])
 
         if det == "smells" and detail.get("smell_id") == "monster_function":
             _update_max_signal(signals, "monster_loc", detail.get("loc", 0))
@@ -120,21 +163,23 @@ def _extract_signals(findings: list[dict[str, Any]]) -> ConcernSignals:
     return signals
 
 
-def _has_elevated_signals(findings: list[dict[str, Any]]) -> bool:
-    """Does any finding have signals strong enough to flag on its own?"""
-    for f in findings:
+def _has_elevated_signals(issues: list[dict[str, Any]]) -> bool:
+    """Does any issue have signals strong enough to flag on its own?"""
+    for f in issues:
         det = f.get("detector", "")
-        detail = f.get("detail", {})
+        detail_raw = f.get("detail", {})
+        detail = detail_raw if isinstance(detail_raw, dict) else {}
 
         if det == "structural":
-            s = detail.get("signals", {})
-            if isinstance(s, dict):
-                if s.get("max_params", 0) >= 8:
-                    return True
-                if s.get("max_nesting", 0) >= 6:
-                    return True
-                if s.get("loc", 0) >= 300:
-                    return True
+            # Check flat detail keys first (real structural data).
+            if detail.get("loc", 0) >= ELEVATED_LOC:
+                return True
+            # Parse complexity_signals strings.
+            parsed = _parse_complexity_signals(detail)
+            if parsed.get("max_params", 0) >= ELEVATED_MAX_PARAMS:
+                return True
+            if parsed.get("max_nesting", 0) >= ELEVATED_MAX_NESTING:
+                return True
 
         if det == "smells" and detail.get("smell_id") == "monster_function":
             return True
@@ -151,7 +196,7 @@ def _has_elevated_signals(findings: list[dict[str, Any]]) -> bool:
 
 def _classify(detectors: set[str], signals: ConcernSignals) -> str:
     """Pick the most specific concern type from what's present."""
-    if len(detectors) >= 3:
+    if len(detectors) >= MIN_DETECTORS_FOR_MIXED:
         return "mixed_responsibilities"
     if "dupes" in detectors or "boilerplate_duplication" in detectors:
         return "duplication_design"
@@ -159,13 +204,48 @@ def _classify(detectors: set[str], signals: ConcernSignals) -> str:
         return "structural_complexity"
     if "coupling" in detectors:
         return "coupling_design"
-    if signals.get("max_params", 0) >= 8:
+    if signals.get("max_params", 0) >= ELEVATED_MAX_PARAMS:
         return "interface_design"
-    if signals.get("max_nesting", 0) >= 6:
+    if signals.get("max_nesting", 0) >= ELEVATED_MAX_NESTING:
         return "structural_complexity"
     if "responsibility_cohesion" in detectors:
         return "mixed_responsibilities"
     return "design_concern"
+
+
+_SUMMARY_TEMPLATES: dict[str, str] = {
+    "mixed_responsibilities": (
+        "Issues from {detector_count} detectors — may have too many responsibilities"
+    ),
+    "duplication_design": "Duplication pattern — assess if extraction is warranted",
+    "coupling_design": "Coupling pattern — assess if boundaries need adjustment",
+    "interface_design": "Interface complexity: {max_params} parameters",
+}
+_DEFAULT_SUMMARY_TEMPLATE = "Design signals from {detector_list}"
+
+
+def _summary_context(detectors: set[str], signals: ConcernSignals) -> dict[str, object]:
+    return {
+        "detector_count": len(detectors),
+        "detector_list": ", ".join(sorted(detectors)),
+        "max_params": int(signals.get("max_params", 0)),
+    }
+
+
+def _build_structural_summary(signals: ConcernSignals) -> str:
+    parts: list[str] = []
+    monster_loc = signals.get("monster_loc", 0)
+    if monster_loc:
+        funcs = signals.get("monster_funcs", [])
+        label = f" ({', '.join(funcs[:3])})" if funcs else ""
+        parts.append(f"monster function{label}: {int(monster_loc)} lines")
+    nesting = signals.get("max_nesting", 0)
+    if nesting >= ELEVATED_MAX_NESTING:
+        parts.append(f"nesting depth {int(nesting)}")
+    params = signals.get("max_params", 0)
+    if params >= ELEVATED_MAX_PARAMS:
+        parts.append(f"{int(params)} parameters")
+    return f"Structural complexity: {', '.join(parts) or 'elevated signals'}"
 
 
 def _build_summary(
@@ -174,52 +254,30 @@ def _build_summary(
     signals: ConcernSignals,
 ) -> str:
     """Human-readable one-liner."""
-    if concern_type == "mixed_responsibilities":
-        return (
-            f"Issues from {len(detectors)} detectors — "
-            "may have too many responsibilities"
-        )
     if concern_type == "structural_complexity":
-        parts: list[str] = []
-        monster_loc = signals.get("monster_loc", 0)
-        if monster_loc:
-            funcs = signals.get("monster_funcs", [])
-            label = f" ({', '.join(funcs[:3])})" if funcs else ""
-            parts.append(f"monster function{label}: {int(monster_loc)} lines")
-        nesting = signals.get("max_nesting", 0)
-        if nesting >= 6:
-            parts.append(f"nesting depth {int(nesting)}")
-        params = signals.get("max_params", 0)
-        if params >= 8:
-            parts.append(f"{int(params)} parameters")
-        return f"Structural complexity: {', '.join(parts) or 'elevated signals'}"
-    if concern_type == "duplication_design":
-        return "Duplication pattern — assess if extraction is warranted"
-    if concern_type == "coupling_design":
-        return "Coupling pattern — assess if boundaries need adjustment"
-    if concern_type == "interface_design":
-        return f"Interface complexity: {int(signals.get('max_params', 0))} parameters"
-    return f"Design signals from {', '.join(sorted(detectors))}"
+        return _build_structural_summary(signals)
+    template = _SUMMARY_TEMPLATES.get(concern_type, _DEFAULT_SUMMARY_TEMPLATE)
+    return template.format(**_summary_context(detectors, signals))
 
 
 def _build_evidence(
-    findings: list[dict[str, Any]],
+    issues: list[dict[str, Any]],
     signals: ConcernSignals,
 ) -> tuple[str, ...]:
-    """Build evidence tuple from all findings and extracted signals."""
+    """Build evidence tuple from all issues and extracted signals."""
     evidence: list[str] = []
 
-    detectors = sorted({f.get("detector", "") for f in findings})
+    detectors = sorted({f.get("detector", "") for f in issues})
     evidence.append(f"Flagged by: {', '.join(detectors)}")
 
     loc = signals.get("loc")
     if loc:
         evidence.append(f"File size: {int(loc)} lines")
     params = signals.get("max_params")
-    if params and params >= 8:
+    if params and params >= ELEVATED_MAX_PARAMS:
         evidence.append(f"Max parameters: {int(params)}")
     nesting = signals.get("max_nesting")
-    if nesting and nesting >= 6:
+    if nesting and nesting >= ELEVATED_MAX_NESTING:
         evidence.append(f"Max nesting depth: {int(nesting)}")
     monster_loc = signals.get("monster_loc")
     if monster_loc:
@@ -227,8 +285,8 @@ def _build_evidence(
         label = f" ({', '.join(funcs[:3])})" if funcs else ""
         evidence.append(f"Monster function{label}: {int(monster_loc)} lines")
 
-    # Individual finding summaries — give LLM the full picture, capped.
-    for f in findings[:10]:
+    # Individual issue summaries — give LLM the full picture, capped.
+    for f in issues[:10]:
         summary = f.get("summary", "")
         if summary:
             evidence.append(f"[{f.get('detector', '')}] {summary}")
@@ -236,88 +294,145 @@ def _build_evidence(
     return tuple(evidence)
 
 
+def _try_make_concern(
+    *,
+    concern_type: str,
+    file: str,
+    fp_keys: tuple[str, ...],
+    all_ids: tuple[str, ...],
+    dismissals: dict,
+    summary: str,
+    evidence: tuple[str, ...],
+    question: str,
+    fp_file: str | None = None,
+) -> Concern | None:
+    """Compute fingerprint, check dismissal, and construct Concern if not dismissed.
+
+    Encapsulates the shared fingerprint -> dismiss -> construct pattern used by
+    all three concern generators.
+
+    ``fp_file`` overrides the file string used in the fingerprint hash when it
+    differs from the Concern's display file (e.g. cross-file patterns use a
+    joined file list for fingerprint stability but report the first file).
+    """
+    fp = _fingerprint(concern_type, fp_file if fp_file is not None else file, fp_keys)
+    if _is_dismissed(dismissals, fp, all_ids):
+        return None
+    return Concern(
+        type=concern_type,
+        file=file,
+        summary=summary,
+        evidence=evidence,
+        question=question,
+        fingerprint=fp,
+        source_issues=all_ids,
+    )
+
+
 def _build_question(
     detectors: set[str], signals: ConcernSignals
 ) -> str:
     """Build targeted question from dominant signals."""
-    parts: list[str] = []
-
-    if len(detectors) >= 3:
-        parts.append(
-            f"This file has issues across {len(detectors)} dimensions "
-            f"({', '.join(sorted(detectors))}). Is it trying to do too many "
-            "things, or is this complexity inherent to its domain?"
-        )
-
     funcs = signals.get("monster_funcs", [])
-    if funcs:
-        parts.append(
-            f"What are the distinct responsibilities in {funcs[0]}()? "
-            "Should it be decomposed into focused functions?"
-        )
+    context = {
+        "detector_count": len(detectors),
+        "detector_list": ", ".join(sorted(detectors)),
+        "first_monster_func": funcs[0] if funcs else "",
+    }
 
-    if signals.get("max_params", 0) >= 8:
-        parts.append(
-            "Should the parameters be grouped into a config/context object? "
-            "Which ones belong together?"
-        )
+    question_rules: tuple[
+        tuple[Callable[[set[str], ConcernSignals], bool], str],
+        ...,
+    ] = (
+        (
+            lambda dets, _signals: len(dets) >= MIN_DETECTORS_FOR_MIXED,
+            (
+                "This file has issues across {detector_count} dimensions "
+                "({detector_list}). Is it trying to do too many things, "
+                "or is this complexity inherent to its domain?"
+            ),
+        ),
+        (
+            lambda _dets, sig: bool(sig.get("monster_funcs")),
+            (
+                "What are the distinct responsibilities in {first_monster_func}()? "
+                "Should it be decomposed into focused functions?"
+            ),
+        ),
+        (
+            lambda _dets, sig: sig.get("max_params", 0) >= ELEVATED_MAX_PARAMS,
+            (
+                "Should the parameters be grouped into a config/context object? "
+                "Which ones belong together?"
+            ),
+        ),
+        (
+            lambda _dets, sig: sig.get("max_nesting", 0) >= ELEVATED_MAX_NESTING,
+            (
+                "Can the nesting be reduced with early returns, guard clauses, "
+                "or extraction into helper functions?"
+            ),
+        ),
+        (
+            lambda dets, _signals: "dupes" in dets or "boilerplate_duplication" in dets,
+            (
+                "Is the duplication worth extracting into a shared utility, "
+                "or is it intentional variation?"
+            ),
+        ),
+        (
+            lambda dets, _signals: "coupling" in dets,
+            (
+                "Is the coupling intentional or does it indicate a missing "
+                "abstraction boundary?"
+            ),
+        ),
+        (
+            lambda dets, _signals: "orphaned" in dets,
+            (
+                "Is this file truly dead, or is it used via a non-import mechanism "
+                "(dynamic import, CLI entry point, plugin)?"
+            ),
+        ),
+        (
+            lambda dets, _signals: "responsibility_cohesion" in dets,
+            (
+                "What are the distinct responsibilities? Should this module be "
+                "split along those lines?"
+            ),
+        ),
+    )
+    parts = [
+        template.format(**context)
+        for predicate, template in question_rules
+        if predicate(detectors, signals)
+    ]
+    if parts:
+        return " ".join(parts)
 
-    if signals.get("max_nesting", 0) >= 6:
-        parts.append(
-            "Can the nesting be reduced with early returns, guard clauses, "
-            "or extraction into helper functions?"
-        )
-
-    if "dupes" in detectors or "boilerplate_duplication" in detectors:
-        parts.append(
-            "Is the duplication worth extracting into a shared utility, "
-            "or is it intentional variation?"
-        )
-
-    if "coupling" in detectors:
-        parts.append(
-            "Is the coupling intentional or does it indicate a missing "
-            "abstraction boundary?"
-        )
-
-    if "orphaned" in detectors:
-        parts.append(
-            "Is this file truly dead, or is it used via a non-import mechanism "
-            "(dynamic import, CLI entry point, plugin)?"
-        )
-
-    if "responsibility_cohesion" in detectors:
-        parts.append(
-            "What are the distinct responsibilities? Should this module be "
-            "split along those lines?"
-        )
-
-    if not parts:
-        parts.append(
-            "Review the flagged patterns — are they design problems that "
-            "need addressing, or acceptable given the file's role?"
-        )
-
-    return " ".join(parts)
+    return (
+        "Review the flagged patterns — are they design problems that "
+        "need addressing, or acceptable given the file's role?"
+    )
 
 
 # ── Generators ───────────────────────────────────────────────────────
 
 
-def _file_concerns(state: dict[str, Any], dismissals: dict[str, Any]) -> list[Concern]:
+def _file_concerns(state: StateModel, dismissals: dict[str, Any]) -> list[Concern]:
     """Per-file design concerns from aggregated mechanical signals.
 
     Flags a file if it has 2+ judgment-needed detectors OR a single
     detector with elevated signals (monster function, high params,
     deep nesting, duplication, coupling, mixed responsibilities).
-    Bundles ALL findings for that file so the LLM sees the full picture.
+    Bundles ALL issues for that file so the LLM sees the full picture.
     """
     by_file = _group_by_file(state)
     concerns: list[Concern] = []
 
-    for file, all_findings in by_file.items():
+    for file, all_issues in by_file.items():
         judgment = [
-            f for f in all_findings
+            f for f in all_issues
             if f.get("detector", "") in JUDGMENT_DETECTORS
         ]
         if not judgment:
@@ -327,41 +442,34 @@ def _file_concerns(state: dict[str, Any], dismissals: dict[str, Any]) -> list[Co
         elevated = _has_elevated_signals(judgment)
 
         # Flag if 2+ judgment detectors OR 1 with elevated signals
-        # OR 1 judgment detector + 2 mechanical findings from any detector.
-        mechanical_count = len(all_findings)
+        # OR 1 judgment detector + 2 mechanical issues from any detector.
+        mechanical_count = len(all_issues)
         if len(judgment_dets) < 2 and not elevated:
             if not (len(judgment_dets) >= 1 and mechanical_count >= 3):
                 continue
 
         signals = _extract_signals(judgment)
         concern_type = _classify(judgment_dets, signals)
-        evidence = _build_evidence(judgment, signals)
-        question = _build_question(judgment_dets, signals)
-        summary = _build_summary(concern_type, judgment_dets, signals)
-
         all_ids = tuple(sorted(f.get("id", "") for f in judgment))
         fp_keys = tuple(sorted(judgment_dets))
-        fp = _fingerprint(concern_type, file, fp_keys)
 
-        if _is_dismissed(dismissals, fp, all_ids):
-            continue
-
-        concerns.append(
-            Concern(
-                type=concern_type,
-                file=file,
-                summary=summary,
-                evidence=evidence,
-                question=question,
-                fingerprint=fp,
-                source_findings=all_ids,
-            )
+        concern = _try_make_concern(
+            concern_type=concern_type,
+            file=file,
+            fp_keys=fp_keys,
+            all_ids=all_ids,
+            dismissals=dismissals,
+            summary=_build_summary(concern_type, judgment_dets, signals),
+            evidence=_build_evidence(judgment, signals),
+            question=_build_question(judgment_dets, signals),
         )
+        if concern is not None:
+            concerns.append(concern)
 
     return concerns
 
 
-def _cross_file_patterns(state: dict[str, Any], dismissals: dict[str, Any]) -> list[Concern]:
+def _cross_file_patterns(state: StateModel, dismissals: dict[str, Any]) -> list[Concern]:
     """Systemic patterns: same judgment detector combo across 3+ files.
 
     When multiple files share the same combination of detector types,
@@ -371,9 +479,9 @@ def _cross_file_patterns(state: dict[str, Any], dismissals: dict[str, Any]) -> l
 
     # Group files by their judgment detector profile.
     profile_to_files: dict[frozenset[str], list[str]] = defaultdict(list)
-    for file, findings in by_file.items():
+    for file, issues in by_file.items():
         dets = frozenset(
-            f.get("detector", "") for f in findings
+            f.get("detector", "") for f in issues
             if f.get("detector", "") in JUDGMENT_DETECTORS
         )
         if len(dets) >= 2:
@@ -381,7 +489,7 @@ def _cross_file_patterns(state: dict[str, Any], dismissals: dict[str, Any]) -> l
 
     concerns: list[Concern] = []
     for det_combo, files in profile_to_files.items():
-        if len(files) < 3:
+        if len(files) < MIN_FILES_FOR_SYSTEMIC:
             continue
 
         sorted_files = sorted(files)
@@ -393,45 +501,38 @@ def _cross_file_patterns(state: dict[str, Any], dismissals: dict[str, Any]) -> l
             if f.get("detector", "") in det_combo
         ))
         # Use first few files in fingerprint so it's stable but bounded.
-        fp = _fingerprint(
-            "systemic_pattern",
-            ",".join(sorted_files[:5]),
-            combo_names,
+        concern = _try_make_concern(
+            concern_type="systemic_pattern",
+            file=sorted_files[0],
+            fp_file=",".join(sorted_files[:5]),
+            fp_keys=combo_names,
+            all_ids=all_ids,
+            dismissals=dismissals,
+            summary=(
+                f"{len(files)} files share the same problem pattern "
+                f"({', '.join(combo_names)})"
+            ),
+            evidence=(
+                f"Affected files: {', '.join(sorted_files[:10])}",
+                f"Shared detectors: {', '.join(combo_names)}",
+                f"Total files: {len(files)}",
+            ),
+            question=(
+                f"These {len(files)} files all have the same combination "
+                f"of issues ({', '.join(combo_names)}). Is this a systemic "
+                "pattern that should be addressed at the architecture level "
+                "(shared base class, framework change, lint rule), or are "
+                "these independent issues that happen to look similar?"
+            ),
         )
-
-        if _is_dismissed(dismissals, fp, all_ids):
-            continue
-
-        concerns.append(
-            Concern(
-                type="systemic_pattern",
-                file=sorted_files[0],
-                summary=(
-                    f"{len(files)} files share the same problem pattern "
-                    f"({', '.join(combo_names)})"
-                ),
-                evidence=(
-                    f"Affected files: {', '.join(sorted_files[:10])}",
-                    f"Shared detectors: {', '.join(combo_names)}",
-                    f"Total files: {len(files)}",
-                ),
-                question=(
-                    f"These {len(files)} files all have the same combination "
-                    f"of issues ({', '.join(combo_names)}). Is this a systemic "
-                    "pattern that should be addressed at the architecture level "
-                    "(shared base class, framework change, lint rule), or are "
-                    "these independent issues that happen to look similar?"
-                ),
-                fingerprint=fp,
-                source_findings=all_ids,
-            )
-        )
+        if concern is not None:
+            concerns.append(concern)
 
     return concerns
 
 
 def _systemic_smell_patterns(
-    state: dict[str, Any], dismissals: dict[str, Any]
+    state: StateModel, dismissals: dict[str, Any]
 ) -> list[Concern]:
     """Systemic concerns: single smell_id appearing across 5+ files.
 
@@ -439,9 +540,9 @@ def _systemic_smell_patterns(
     This catches pervasive single-smell issues (e.g. broad_except in 12 files).
     """
     smell_files: dict[str, list[str]] = defaultdict(list)
-    smell_ids_map: dict[str, list[str]] = defaultdict(list)  # smell_id -> finding IDs
+    smell_ids_map: dict[str, list[str]] = defaultdict(list)  # smell_id -> issue IDs
 
-    for f in _open_findings(state):
+    for f in _open_issues(state):
         if f.get("detector") != "smells":
             continue
         detail = f.get("detail", {})
@@ -454,36 +555,34 @@ def _systemic_smell_patterns(
     concerns: list[Concern] = []
     for smell_id, files in smell_files.items():
         unique_files = sorted(set(files))
-        if len(unique_files) < 5:
+        if len(unique_files) < MIN_FILES_FOR_SMELL_PATTERN:
             continue
 
         all_ids = tuple(sorted(smell_ids_map[smell_id]))
-        fp = _fingerprint("systemic_smell", smell_id, (smell_id,))
-        if _is_dismissed(dismissals, fp, all_ids):
-            continue
-
-        concerns.append(
-            Concern(
-                type="systemic_smell",
-                file=unique_files[0],
-                summary=(
-                    f"'{smell_id}' appears in {len(unique_files)} files — "
-                    "likely a systemic pattern"
-                ),
-                evidence=(
-                    f"Smell: {smell_id}",
-                    f"Affected files ({len(unique_files)}): {', '.join(unique_files[:10])}",
-                ),
-                question=(
-                    f"The smell '{smell_id}' appears across {len(unique_files)} files. "
-                    "Is this a codebase-wide convention that should be addressed "
-                    "systemically (lint rule, shared utility, architecture change), "
-                    "or are these independent occurrences?"
-                ),
-                fingerprint=fp,
-                source_findings=all_ids,
-            )
+        concern = _try_make_concern(
+            concern_type="systemic_smell",
+            file=unique_files[0],
+            fp_file=smell_id,
+            fp_keys=(smell_id,),
+            all_ids=all_ids,
+            dismissals=dismissals,
+            summary=(
+                f"'{smell_id}' appears in {len(unique_files)} files — "
+                "likely a systemic pattern"
+            ),
+            evidence=(
+                f"Smell: {smell_id}",
+                f"Affected files ({len(unique_files)}): {', '.join(unique_files[:10])}",
+            ),
+            question=(
+                f"The smell '{smell_id}' appears across {len(unique_files)} files. "
+                "Is this a codebase-wide convention that should be addressed "
+                "systemically (lint rule, shared utility, architecture change), "
+                "or are these independent occurrences?"
+            ),
         )
+        if concern is not None:
+            concerns.append(concern)
 
     return concerns
 
@@ -492,15 +591,12 @@ _GENERATORS = [_file_concerns, _cross_file_patterns, _systemic_smell_patterns]
 
 
 def generate_concerns(
-    state: dict[str, Any],
-    lang_name: str | None = None,
+    state: StateModel,
 ) -> list[Concern]:
     """Run all concern generators against current state.
 
     Returns deduplicated list sorted by (type, file).
-    lang_name is reserved for future language-specific generators.
     """
-    del lang_name  # Reserved for future use.
     dismissals = state.get("concern_dismissals", {})
     concerns: list[Concern] = []
     seen_fps: set[str] = set()
@@ -515,21 +611,21 @@ def generate_concerns(
     return concerns
 
 
-def cleanup_stale_dismissals(state: dict[str, Any]) -> int:
-    """Remove dismissals whose source findings all disappeared.
+def cleanup_stale_dismissals(state: StateModel) -> int:
+    """Remove dismissals whose source issues all disappeared.
 
     Returns the number of stale entries removed.  Dismissals without
-    ``source_finding_ids`` (legacy) are left untouched.
+    ``source_issue_ids`` (legacy) are left untouched.
     """
     dismissals = state.get("concern_dismissals", {})
     if not dismissals:
         return 0
-    open_ids = {f.get("id", "") for f in _open_findings(state)}
+    open_ids = {f.get("id", "") for f in _open_issues(state)}
     stale_fps = [
         fp
         for fp, entry in dismissals.items()
-        if entry.get("source_finding_ids")
-        and not any(sid in open_ids for sid in entry["source_finding_ids"])
+        if entry.get("source_issue_ids")
+        and not any(sid in open_ids for sid in entry["source_issue_ids"])
     ]
     for fp in stale_fps:
         del dismissals[fp]

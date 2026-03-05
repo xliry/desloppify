@@ -1,8 +1,8 @@
-"""Tests for desloppify.core.signal_patterns — regex patterns and helpers."""
+"""Tests for desloppify.base.signal_patterns — regex patterns and helpers."""
 
 from __future__ import annotations
 
-from desloppify.core.signal_patterns import (
+from desloppify.base.signal_patterns import (
     DEPRECATION_MARKER_RE,
     MIGRATION_TODO_RE,
     SERVER_ONLY_PATH_HINTS,

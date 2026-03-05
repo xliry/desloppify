@@ -28,8 +28,8 @@ def test_phase_security_uses_max_scan_count_with_lang_security_result(monkeypatc
         "detect_security_issues",
         lambda _files, _zone, _lang, **_kwargs: ([], 2),
     )
-    findings, potentials = phase_security(tmp_path, _lang_stub(files_scanned=7))
-    assert findings == []
+    issues, potentials = phase_security(tmp_path, _lang_stub(files_scanned=7))
+    assert issues == []
     assert potentials == {"security": 7}
 
 
@@ -39,6 +39,6 @@ def test_phase_security_keeps_cross_lang_scan_count_when_larger(monkeypatch, tmp
         "detect_security_issues",
         lambda _files, _zone, _lang, **_kwargs: ([], 9),
     )
-    findings, potentials = phase_security(tmp_path, _lang_stub(files_scanned=3))
-    assert findings == []
+    issues, potentials = phase_security(tmp_path, _lang_stub(files_scanned=3))
+    assert issues == []
     assert potentials == {"security": 9}

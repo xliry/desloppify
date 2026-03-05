@@ -4,36 +4,68 @@ from __future__ import annotations
 
 import logging
 import sys
-from pathlib import Path
-
+from functools import lru_cache
+import argparse
 from desloppify.app.cli_support.parser import create_parser as _create_parser
 from desloppify.app.commands.helpers.lang import LangResolutionError, resolve_lang
 from desloppify.app.commands.helpers.runtime import CommandRuntime
 from desloppify.app.commands.helpers.state import state_path
-from desloppify.core._internal.text_utils import get_project_root
-from desloppify.core.config import load_config
-from desloppify.core.discovery_api import set_exclusions
-from desloppify.core.output_api import colorize
-from desloppify.core.paths_api import get_default_path
-from desloppify.core.runtime_state import runtime_scope
+from desloppify.app.commands.registry import get_command_handlers
+from desloppify.base.config import load_config
+from desloppify.base.discovery.source import set_exclusions
+from desloppify.base.exception_sets import CommandError
+from desloppify.base.output.fallbacks import log_best_effort_failure
+from desloppify.base.output.terminal import colorize
+from desloppify.base.discovery.paths import get_default_path, get_project_root
+from desloppify.base.registry import detector_names, on_detector_registered
+from desloppify.base.runtime_state import runtime_scope
 from desloppify.languages import available_langs
 from desloppify.state import load_state
 
-_DETECTOR_NAMES: list[str] | None = None
 logger = logging.getLogger(__name__)
-# Backward-compatible test patch hook; runtime path resolution uses get_project_root().
-PROJECT_ROOT = get_project_root()
-_PROJECT_ROOT_SENTINEL = PROJECT_ROOT
+
+
+class _DetectorNamesCacheCompat:
+    """Compat shim for tests that poke the legacy detector-name cache."""
+
+    def __init__(self) -> None:
+        self._store: dict[str, list[str]] = {}
+
+    def __contains__(self, key: object) -> bool:
+        return key in self._store
+
+    def __getitem__(self, key: str) -> list[str]:
+        return self._store[key]
+
+    def __setitem__(self, key: str, value: list[str]) -> None:
+        self._store[key] = value
+
+    def pop(self, key: str, default=None):
+        return self._store.pop(key, default)
+
+
+_DETECTOR_NAMES_CACHE = _DetectorNamesCacheCompat()
+
+
+@lru_cache(maxsize=1)
+def _get_detector_names_cached() -> tuple[str, ...]:
+    """Compute detector names once until cache invalidation."""
+    return tuple(detector_names())
 
 
 def _get_detector_names() -> list[str]:
     """Return cached detector names, computing on first access."""
-    global _DETECTOR_NAMES
-    if _DETECTOR_NAMES is None:
-        from desloppify.core.registry import detector_names
+    return list(_get_detector_names_cached())
 
-        _DETECTOR_NAMES = detector_names()
-    return _DETECTOR_NAMES
+
+def _invalidate_detector_names_cache() -> None:
+    """Invalidate detector-name cache when runtime registrations change."""
+    _get_detector_names_cached.cache_clear()
+    _DETECTOR_NAMES_CACHE.pop("names", None)
+
+
+on_detector_registered(_invalidate_detector_names_cache)
+
 
 def create_parser():
     """Return the top-level argparse parser."""
@@ -62,7 +94,7 @@ def _apply_persisted_exclusions(args, config: dict):
     )
 
 
-def _resolve_default_path(args) -> None:
+def _resolve_default_path(args: argparse.Namespace) -> None:
     """Fill args.path from detected language or default source path.
 
     For the review command, the last scan path (stored in state) is used as the
@@ -71,11 +103,7 @@ def _resolve_default_path(args) -> None:
     """
     if getattr(args, "path", None) is not None:
         return
-    runtime_root = (
-        PROJECT_ROOT.resolve()
-        if PROJECT_ROOT is not _PROJECT_ROOT_SENTINEL and isinstance(PROJECT_ROOT, Path)
-        else get_project_root()
-    )
+    runtime_root = get_project_root()
     if getattr(args, "command", None) == "review":
         try:
             state_file = state_path(args)
@@ -86,7 +114,7 @@ def _resolve_default_path(args) -> None:
                     args.path = str((runtime_root / saved_path).resolve())
                     return
         except (OSError, KeyError, ValueError, TypeError, AttributeError) as exc:
-            logger.debug("Failed to resolve default path from saved state: %s", exc)
+            log_best_effort_failure(logger, "resolve default review path from saved state", exc)
     lang = resolve_lang(args)
     if lang:
         args.path = str(runtime_root / lang.default_src)
@@ -94,7 +122,7 @@ def _resolve_default_path(args) -> None:
         args.path = str(get_default_path())
 
 
-def _load_shared_runtime(args) -> None:
+def _load_shared_runtime(args: argparse.Namespace) -> None:
     """Load config/state and attach shared objects to parsed args."""
     config = load_config()
 
@@ -106,8 +134,6 @@ def _load_shared_runtime(args) -> None:
 
 
 def _resolve_handler(command: str):
-    from desloppify.app.commands.registry import get_command_handlers
-
     return get_command_handlers()[command]
 
 
@@ -134,6 +160,9 @@ def main() -> None:
 
     parser = create_parser()
     args = parser.parse_args()
+    if not args.command:
+        parser.print_help()
+        return
     if args.command == "help":
         _handle_help_command(args, parser)
         return
@@ -145,6 +174,9 @@ def main() -> None:
 
             handler = _resolve_handler(args.command)
             handler(args)
+    except CommandError as exc:
+        print(colorize(f"  {exc.message}", "red"), file=sys.stderr)
+        sys.exit(exc.exit_code)
     except LangResolutionError as exc:
         print(colorize(f"  {exc.message}", "red"), file=sys.stderr)
         sys.exit(1)

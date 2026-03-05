@@ -163,7 +163,7 @@ def test_make_unused_imports_phase_label():
     assert phase.label == "Unused imports"
 
 
-def test_make_ast_smells_phase_run_with_no_findings():
+def test_make_ast_smells_phase_run_with_no_issues():
     """Run an AST smells phase when detectors return empty results."""
     from desloppify.languages._framework.treesitter.phases import make_ast_smells_phase
 
@@ -180,8 +180,8 @@ def test_make_ast_smells_phase_run_with_no_findings():
         "desloppify.languages._framework.treesitter._smells.detect_unreachable_code",
         return_value=[],
     ):
-        findings, potentials = phase.run("/tmp", mock_lang)
-    assert findings == []
+        issues, potentials = phase.run("/tmp", mock_lang)
+    assert issues == []
     assert potentials == {}
 
 
@@ -205,16 +205,16 @@ def test_make_ast_smells_phase_run_with_catches_and_unreachable():
         "desloppify.languages._framework.treesitter._smells.detect_unreachable_code",
         return_value=unreachable,
     ):
-        findings, potentials = phase.run("/tmp", mock_lang)
+        issues, potentials = phase.run("/tmp", mock_lang)
 
-    assert len(findings) == 2
+    assert len(issues) == 2
     assert potentials["empty_catch"] == 1
     assert potentials["unreachable_code"] == 1
-    # Check finding content
-    assert findings[0]["detector"] == "smells"
-    assert "empty_catch" in findings[0]["id"]
-    assert findings[1]["detector"] == "smells"
-    assert "unreachable_code" in findings[1]["id"]
+    # Check issue content
+    assert issues[0]["detector"] == "smells"
+    assert "empty_catch" in issues[0]["id"]
+    assert issues[1]["detector"] == "smells"
+    assert "unreachable_code" in issues[1]["id"]
 
 
 def test_make_cohesion_phase_run_with_entries():
@@ -238,12 +238,12 @@ def test_make_cohesion_phase_run_with_entries():
         "desloppify.languages._framework.treesitter._cohesion.detect_responsibility_cohesion",
         return_value=(entries, 1),
     ):
-        findings, potentials = phase.run("/tmp", mock_lang)
+        issues, potentials = phase.run("/tmp", mock_lang)
 
-    assert len(findings) == 1
+    assert len(issues) == 1
     assert potentials["responsibility_cohesion"] == 1
-    assert findings[0]["detector"] == "responsibility_cohesion"
-    assert "disconnected function clusters" in findings[0]["summary"]
+    assert issues[0]["detector"] == "responsibility_cohesion"
+    assert "disconnected function clusters" in issues[0]["summary"]
 
 
 def test_make_unused_imports_phase_run_with_entries():
@@ -267,13 +267,13 @@ def test_make_unused_imports_phase_run_with_entries():
         "desloppify.languages._framework.treesitter._unused_imports.detect_unused_imports",
         return_value=entries,
     ):
-        findings, potentials = phase.run("/tmp", mock_lang)
+        issues, potentials = phase.run("/tmp", mock_lang)
 
-    assert len(findings) == 2
+    assert len(issues) == 2
     assert potentials["unused_imports"] == 2
-    assert findings[0]["detector"] == "unused"
-    assert "fmt" in findings[0]["summary"]
-    assert "os" in findings[1]["summary"]
+    assert issues[0]["detector"] == "unused"
+    assert "fmt" in issues[0]["summary"]
+    assert "os" in issues[1]["summary"]
 
 
 def test_all_treesitter_phases_returns_empty_when_unavailable():

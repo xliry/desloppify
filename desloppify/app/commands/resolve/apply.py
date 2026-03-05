@@ -3,27 +3,31 @@
 from __future__ import annotations
 
 import argparse
+import logging
 
 from desloppify import state as state_mod
-from desloppify.app.commands.helpers.query import write_query_best_effort as _write_query_best_effort
-from desloppify.core.output_contract import OutputResult
+from desloppify.app.commands.helpers.query import (
+    write_query_best_effort as _write_query_best_effort,
+)
+from desloppify.base.exception_sets import PLAN_LOAD_EXCEPTIONS
+from desloppify.engine.plan import has_living_plan, load_plan
 
 from .selection import ResolveQueryContext
 
+_logger = logging.getLogger(__name__)
+
 
 def _try_expand_cluster(pattern: str) -> list[str] | None:
-    """If pattern matches a cluster name, return its finding IDs."""
+    """If pattern matches a cluster name, return its issue IDs."""
     try:
-        from desloppify.engine.plan import has_living_plan, load_plan
-
         if not has_living_plan():
             return None
         plan = load_plan()
         cluster = plan.get("clusters", {}).get(pattern)
-        if cluster and cluster.get("finding_ids"):
-            return list(cluster["finding_ids"])
-    except (OSError, ValueError, KeyError, TypeError):
-        pass
+        if cluster and cluster.get("issue_ids"):
+            return list(cluster["issue_ids"])
+    except PLAN_LOAD_EXCEPTIONS:
+        _logger.debug("cluster expansion skipped for %r", pattern, exc_info=True)
     return None
 
 
@@ -39,7 +43,7 @@ def _resolve_all_patterns(
         cluster_ids = _try_expand_cluster(pattern)
         if cluster_ids:
             for fid in cluster_ids:
-                resolved = state_mod.resolve_findings(
+                resolved = state_mod.resolve_issues(
                     state,
                     fid,
                     args.status,
@@ -49,7 +53,7 @@ def _resolve_all_patterns(
                 all_resolved.extend(resolved)
             continue
 
-        resolved = state_mod.resolve_findings(
+        resolved = state_mod.resolve_issues(
             state,
             pattern,
             args.status,
@@ -59,18 +63,9 @@ def _resolve_all_patterns(
         all_resolved.extend(resolved)
     return all_resolved
 
-
-def write_query(payload: dict) -> OutputResult:
-    """Backward-compatible resolve query writer seam."""
-    return _write_query_best_effort(
-        payload,
-        context="resolve query payload update",
-    )
-
-
 def _write_resolve_query_entry(context: ResolveQueryContext) -> None:
     scores = state_mod.score_snapshot(context.state)
-    write_query(
+    _write_query_best_effort(
         {
             "command": "resolve",
             "patterns": context.patterns,
@@ -88,5 +83,6 @@ def _write_resolve_query_entry(context: ResolveQueryContext) -> None:
             "prev_verified_strict_score": context.prev_verified,
             "attestation": context.attestation,
             "narrative": context.narrative,
-        }
+        },
+        context="resolve query payload update",
     )

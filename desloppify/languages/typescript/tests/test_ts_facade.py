@@ -79,17 +79,17 @@ class TestDetectReexportFacades:
         f = tmp_path / "index.ts"
         f.write_text("export * from './core';\n")
 
-        graph = {str(f): _make_graph_entry(importer_count=5)}
-        entries, total = detect_reexport_facades(graph, max_importers=2)
+        graph = {str(f): _make_graph_entry(importer_count=21)}
+        entries, total = detect_reexport_facades(graph)
         assert entries == []
         assert total == 1
 
-    def test_custom_max_importers(self, tmp_path):
+    def test_default_threshold_allows_moderate_importers(self, tmp_path):
         f = tmp_path / "index.ts"
         f.write_text("export * from './core';\n")
 
         graph = {str(f): _make_graph_entry(importer_count=3)}
-        entries, total = detect_reexport_facades(graph, max_importers=3)
+        entries, total = detect_reexport_facades(graph)
         assert len(entries) == 1
         assert total == 1
 

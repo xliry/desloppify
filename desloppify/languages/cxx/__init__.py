@@ -11,7 +11,7 @@ generic_lang(
             "label": "cppcheck",
             "cmd": "cppcheck --template='{file}:{line}: {severity}: {message}' --enable=all --quiet .",
             "fmt": "gnu",
-            "id": "cppcheck_finding",
+            "id": "cppcheck_issue",
             "tier": 2,
             "fix_cmd": None,
         },
@@ -21,3 +21,8 @@ generic_lang(
     detect_markers=["CMakeLists.txt", "Makefile"],
     treesitter_spec=CPP_SPEC,
 )
+
+__all__ = [
+    "generic_lang",
+    "CPP_SPEC",
+]

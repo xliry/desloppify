@@ -2,7 +2,7 @@
 
 Runs ``ruff check`` with a targeted rule set and maps each ruff code to a
 desloppify smell ID. Produces smell entries in the same format as detect_smells()
-so they flow through make_smell_findings() without any plumbing changes.
+so they flow through make_smell_issues() without any plumbing changes.
 
 Falls back gracefully to [] when ruff is not installed.
 
@@ -31,16 +31,10 @@ import subprocess
 from collections import defaultdict
 from pathlib import Path
 
-from desloppify.core._internal.text_utils import PROJECT_ROOT
-from desloppify.core.discovery_api import (
-    collect_exclude_dirs as _collect_exclude_dirs,
-)
-from desloppify.core.discovery_api import (
-    get_exclusions as _get_exclusions,
-)
-from desloppify.core.discovery_api import (
-    matches_exclusion as _matches_exclusion,
-)
+from desloppify.base.discovery.source import collect_exclude_dirs as _collect_exclude_dirs
+from desloppify.base.discovery.source import get_exclusions as _get_exclusions
+from desloppify.base.discovery.file_paths import matches_exclusion as _matches_exclusion
+from desloppify.base.discovery.paths import get_project_root
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +62,7 @@ _SELECT = ",".join(_RULE_MAP)
 def detect_with_ruff_smells(path: Path) -> list[dict] | None:
     """Run ruff on supplemental B/E/W rules and return smell entries, or None on failure.
 
-    Each entry matches the format expected by make_smell_findings():
+    Each entry matches the format expected by make_smell_issues():
         {
             "id": smell_id,
             "label": label,
@@ -95,7 +89,7 @@ def detect_with_ruff_smells(path: Path) -> list[dict] | None:
             cmd,
             capture_output=True,
             text=True,
-            cwd=PROJECT_ROOT,
+            cwd=get_project_root(),
             timeout=60,
         )
     except FileNotFoundError:

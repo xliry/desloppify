@@ -26,8 +26,8 @@ def test_make_lang_config_wraps_constructor_errors():
 
 def test_get_lang_uses_registry_and_reports_unknown(monkeypatch):
     sentinel_cls = object()
-    monkeypatch.setattr(registry_state, "_registry", {"python": sentinel_cls})
-    monkeypatch.setattr(lang_resolution_mod, "load_all", lambda: None)
+    monkeypatch.setattr(registry_state._STATE, "registry", {"python": sentinel_cls})
+    monkeypatch.setattr(lang_resolution_mod, "load_all", lambda **_kw: None)
     monkeypatch.setattr(
         lang_resolution_mod, "make_lang_config", lambda name, cfg_cls: (name, cfg_cls)
     )
@@ -50,11 +50,11 @@ def test_auto_detect_lang_prefers_marker_candidates_with_most_sources(
     (tmp_path / "package.json").write_text("{}\n")
 
     monkeypatch.setattr(
-        registry_state,
-        "_registry",
+        registry_state._STATE,
+        "registry",
         {"python": object(), "typescript": object()},
     )
-    monkeypatch.setattr(lang_resolution_mod, "load_all", lambda: None)
+    monkeypatch.setattr(lang_resolution_mod, "load_all", lambda **_kw: None)
 
     cfg_by_name = {
         "python": SimpleNamespace(
@@ -82,11 +82,11 @@ def test_auto_detect_lang_prefers_marker_candidates_with_most_sources(
 
 def test_auto_detect_lang_markerless_fallback(monkeypatch, tmp_path):
     monkeypatch.setattr(
-        registry_state,
-        "_registry",
+        registry_state._STATE,
+        "registry",
         {"python": object(), "typescript": object()},
     )
-    monkeypatch.setattr(lang_resolution_mod, "load_all", lambda: None)
+    monkeypatch.setattr(lang_resolution_mod, "load_all", lambda **_kw: None)
 
     cfg_by_name = {
         "python": SimpleNamespace(
@@ -113,11 +113,11 @@ def test_auto_detect_lang_supports_glob_markers(monkeypatch, tmp_path):
     (tmp_path / "package.json").write_text("{}\n")
 
     monkeypatch.setattr(
-        registry_state,
-        "_registry",
+        registry_state._STATE,
+        "registry",
         {"fsharp": object(), "typescript": object()},
     )
-    monkeypatch.setattr(lang_resolution_mod, "load_all", lambda: None)
+    monkeypatch.setattr(lang_resolution_mod, "load_all", lambda **_kw: None)
 
     cfg_by_name = {
         "fsharp": SimpleNamespace(
@@ -141,9 +141,9 @@ def test_auto_detect_lang_supports_glob_markers(monkeypatch, tmp_path):
 
 def test_available_langs_returns_sorted_list(monkeypatch):
     monkeypatch.setattr(
-        registry_state, "_registry", {"zeta": object(), "alpha": object()}
+        registry_state._STATE, "registry", {"zeta": object(), "alpha": object()}
     )
-    monkeypatch.setattr(lang_resolution_mod, "load_all", lambda: None)
+    monkeypatch.setattr(lang_resolution_mod, "load_all", lambda **_kw: None)
 
     langs = lang_resolution_mod.available_langs()
     assert langs == ["alpha", "zeta"]

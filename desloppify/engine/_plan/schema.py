@@ -2,17 +2,25 @@
 
 from __future__ import annotations
 
-from typing import Any, Required, TypedDict
+from typing import Any, NotRequired, Required, TypedDict
 
+from desloppify.engine._plan.schema_migrations import (
+    upgrade_plan_to_v7 as _upgrade_plan_to_v7,
+)
+from desloppify.engine._plan.skip_policy import VALID_SKIP_KINDS
 from desloppify.engine._state.schema import utc_now
 
-PLAN_VERSION = 2
+PLAN_VERSION = 7
 
-VALID_SKIP_KINDS = {"temporary", "permanent", "false_positive"}
+EPIC_PREFIX = "epic/"
+VALID_EPIC_DIRECTIONS = {
+    "delete", "merge", "flatten", "enforce",
+    "simplify", "decompose", "extract", "inline",
+}
 
 
 class SkipEntry(TypedDict, total=False):
-    finding_id: Required[str]
+    issue_id: Required[str]
     kind: Required[str]  # "temporary" | "permanent" | "false_positive"
     reason: str | None
     note: str | None  # required for permanent (wontfix note)
@@ -23,7 +31,7 @@ class SkipEntry(TypedDict, total=False):
 
 
 class ItemOverride(TypedDict, total=False):
-    finding_id: Required[str]
+    issue_id: Required[str]
     description: str | None
     note: str | None
     cluster: str | None
@@ -34,13 +42,44 @@ class ItemOverride(TypedDict, total=False):
 class Cluster(TypedDict, total=False):
     name: Required[str]
     description: str | None
-    finding_ids: list[str]
+    issue_ids: list[str]
     created_at: str
     updated_at: str
     auto: bool  # True for auto-generated clusters
     cluster_key: str  # Deterministic grouping key (for regeneration)
     action: str | None  # Primary resolution command/guidance text
     user_modified: bool  # True when user manually edits membership
+    optional: bool
+    thesis: str
+    direction: str
+    root_cause: str
+    supersedes: list[str]
+    dismissed: list[str]
+    agent_safe: bool
+    dependency_order: int
+    action_steps: list[str]
+    source_clusters: list[str]
+    status: str
+    triage_version: int
+
+
+class CommitRecord(TypedDict, total=False):
+    sha: Required[str]           # git commit SHA
+    branch: str | None           # branch name
+    issue_ids: list[str]       # issues included
+    recorded_at: str             # ISO timestamp
+    note: str | None             # user-provided rationale
+    cluster_name: str | None     # cluster context
+
+
+class ExecutionLogEntry(TypedDict, total=False):
+    timestamp: Required[str]
+    action: Required[str]  # "done", "skip", "unskip", "resolve", "reconcile", "cluster_done", "focus", "reset"
+    issue_ids: list[str]
+    cluster_name: str | None
+    actor: str  # "user" | "system" | "agent"
+    note: str | None
+    detail: dict[str, Any]  # action-specific extra data
 
 
 class SupersededEntry(TypedDict, total=False):
@@ -55,6 +94,54 @@ class SupersededEntry(TypedDict, total=False):
     note: str | None
 
 
+class PlanStartScores(TypedDict, total=False):
+    """Frozen score snapshot captured when a plan cycle starts."""
+
+    strict: float
+    overall: float
+    objective: float
+    verified: float
+    reset: bool
+
+
+class TriageStagePayload(TypedDict, total=False):
+    """Persisted payload for one triage stage checkpoint."""
+
+    stage: str
+    report: str
+    cited_ids: list[str]
+    timestamp: str
+    issue_count: int
+    recurring_dims: list[str]
+    confirmed_at: str
+    confirmed_text: str
+
+
+class LastTriageSnapshot(TypedDict, total=False):
+    """Archived triage stage state captured when triage is completed."""
+
+    completed_at: str
+    stages: dict[str, TriageStagePayload]
+    strategy: str
+
+
+class EpicTriageMeta(TypedDict, total=False):
+    """Metadata persisted for the multi-stage triage flow."""
+
+    triaged_ids: list[str]
+    dismissed_ids: list[str]
+    issue_snapshot_hash: str
+    strategy_summary: str
+    trigger: str
+    version: int
+    last_run: str
+    last_completed_at: str
+    triage_stages: dict[str, TriageStagePayload]
+    stage_snapshot_hash: str
+    stage_refresh_required: bool
+    last_triage: LastTriageSnapshot
+
+
 class PlanModel(TypedDict, total=False):
     version: Required[int]
     created: Required[str]
@@ -66,6 +153,14 @@ class PlanModel(TypedDict, total=False):
     overrides: dict[str, ItemOverride]
     clusters: dict[str, Cluster]
     superseded: dict[str, SupersededEntry]
+    promoted_ids: list[str]  # IDs user explicitly positioned via move_items()
+    plan_start_scores: PlanStartScores
+    execution_log: list[ExecutionLogEntry]
+    epic_triage_meta: EpicTriageMeta
+    commit_log: list[CommitRecord]
+    uncommitted_issues: list[str]
+    commit_tracking_branch: str | None
+    completed_clusters: NotRequired[list[dict[str, Any]]]  # legacy snapshot key
 
 
 def empty_plan() -> PlanModel:
@@ -82,59 +177,34 @@ def empty_plan() -> PlanModel:
         "overrides": {},
         "clusters": {},
         "superseded": {},
+        "promoted_ids": [],
+        "plan_start_scores": {},
+        "execution_log": [],
+        "epic_triage_meta": {},
+        "commit_log": [],
+        "uncommitted_issues": [],
+        "commit_tracking_branch": None,
     }
 
 
 def ensure_plan_defaults(plan: dict[str, Any]) -> None:
     """Normalize a loaded plan to ensure all keys exist.
 
-    Handles migration from v1 (deferred list) to v2 (skipped dict).
+    Runtime contract is v7-only. Legacy payloads are upgraded in-place once.
     """
     defaults = empty_plan()
     for key, value in defaults.items():
         plan.setdefault(key, value)
+    _upgrade_plan_to_v7(plan)
 
-    if not isinstance(plan.get("queue_order"), list):
-        plan["queue_order"] = []
-    if not isinstance(plan.get("deferred"), list):
-        plan["deferred"] = []
-    if not isinstance(plan.get("skipped"), dict):
-        plan["skipped"] = {}
-    if not isinstance(plan.get("overrides"), dict):
-        plan["overrides"] = {}
-    if not isinstance(plan.get("clusters"), dict):
-        plan["clusters"] = {}
-    if not isinstance(plan.get("superseded"), dict):
-        plan["superseded"] = {}
 
-    # Migrate deferred → skipped (v1 → v2)
-    deferred: list[str] = plan["deferred"]
-    skipped: dict[str, SkipEntry] = plan["skipped"]
-    if deferred:
-        now = utc_now()
-        for fid in list(deferred):
-            if fid not in skipped:
-                skipped[fid] = {
-                    "finding_id": fid,
-                    "kind": "temporary",
-                    "reason": None,
-                    "note": None,
-                    "attestation": None,
-                    "created_at": now,
-                    "review_after": None,
-                    "skipped_at_scan": 0,
-                }
-        deferred.clear()
-
-    # Normalize cluster fields
-    for cluster in plan["clusters"].values():
-        if isinstance(cluster, dict):
-            if not isinstance(cluster.get("finding_ids"), list):
-                cluster["finding_ids"] = []
-            cluster.setdefault("auto", False)
-            cluster.setdefault("cluster_key", "")
-            cluster.setdefault("action", None)
-            cluster.setdefault("user_modified", False)
+def triage_clusters(plan: dict[str, Any]) -> dict[str, Cluster]:
+    """Return clusters whose name starts with ``EPIC_PREFIX``."""
+    return {
+        name: cluster
+        for name, cluster in plan.get("clusters", {}).items()
+        if name.startswith(EPIC_PREFIX)
+    }
 
 
 def validate_plan(plan: dict[str, Any]) -> None:
@@ -162,14 +232,23 @@ def validate_plan(plan: dict[str, Any]) -> None:
 
 
 __all__ = [
+    "EPIC_PREFIX",
+    "EpicTriageMeta",
+    "ExecutionLogEntry",
     "PLAN_VERSION",
     "Cluster",
+    "CommitRecord",
     "ItemOverride",
+    "LastTriageSnapshot",
     "PlanModel",
+    "PlanStartScores",
     "SkipEntry",
     "SupersededEntry",
+    "TriageStagePayload",
+    "VALID_EPIC_DIRECTIONS",
     "VALID_SKIP_KINDS",
     "empty_plan",
     "ensure_plan_defaults",
+    "triage_clusters",
     "validate_plan",
 ]

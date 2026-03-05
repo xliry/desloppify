@@ -6,10 +6,10 @@ import logging
 import sys
 from pathlib import Path
 
-from desloppify.core._internal.text_utils import PROJECT_ROOT
-from desloppify.core.fallbacks import log_best_effort_failure
-from desloppify.core.file_paths import rel, safe_write_text
-from desloppify.core.output import colorize
+from desloppify.base.output.fallbacks import log_best_effort_failure
+from desloppify.base.discovery.file_paths import rel, safe_write_text
+from desloppify.base.output.terminal import colorize
+from desloppify.base.discovery.paths import get_project_root
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ def _process_fixer_file(
     transform_fn,
     dry_run: bool,
 ) -> dict[str, object] | None:
-    path = Path(filepath) if Path(filepath).is_absolute() else PROJECT_ROOT / filepath
+    path = Path(filepath) if Path(filepath).is_absolute() else get_project_root() / filepath
     original = path.read_text()
     lines = original.splitlines(keepends=True)
 

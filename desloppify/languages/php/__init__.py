@@ -21,3 +21,8 @@ generic_lang(
     detect_markers=["composer.json"],
     treesitter_spec=PHP_SPEC,
 )
+
+__all__ = [
+    "generic_lang",
+    "PHP_SPEC",
+]

@@ -13,12 +13,12 @@ from desloppify.app.output._viz_cmd_context import load_cmd_context
 from desloppify.app.output.tree_text import _aggregate, _print_tree
 from desloppify.app.output.visualize import (
     D3_CDN_URL,
-    _collect_file_data,
     _build_tree,
+    _collect_file_data,
     cmd_viz,
     generate_visualization,
 )
-from desloppify.core.output_contract import OutputResult
+from desloppify.base.output.contract import OutputResult
 
 # ===========================================================================
 # esc() — XSS sanitizer (lives in the JS template, test the Python-side
@@ -163,20 +163,20 @@ class TestBuildTree:
         assert leaf["fan_in"] == 3
         assert leaf["fan_out"] == 5
 
-    def test_findings_overlay(self):
+    def test_issues_overlay(self):
         files = [self._file("src/foo.ts")]
-        findings = {
+        issues = {
             "src/foo.ts": [
                 {"status": "open", "summary": "unused import React"},
                 {"status": "open", "summary": "console.log"},
                 {"status": "fixed", "summary": "already fixed"},
             ],
         }
-        tree = _build_tree(files, {}, findings)
+        tree = _build_tree(files, {}, issues)
         leaf = tree["children"][0]
-        assert leaf["findings_total"] == 3
-        assert leaf["findings_open"] == 2
-        assert len(leaf["finding_summaries"]) == 2
+        assert leaf["issues_total"] == 3
+        assert leaf["issues_open"] == 2
+        assert len(leaf["issue_summaries"]) == 2
 
     def test_children_converted_to_arrays(self):
         """After _build_tree, children should be lists, not dicts."""
@@ -225,14 +225,14 @@ class TestAggregate:
         leaf = {
             "name": "foo.ts",
             "loc": 100,
-            "findings_open": 3,
+            "issues_open": 3,
             "fan_in": 2,
             "fan_out": 5,
         }
         agg = _aggregate(leaf)
         assert agg["files"] == 1
         assert agg["loc"] == 100
-        assert agg["findings"] == 3
+        assert agg["issues"] == 3
         assert agg["max_coupling"] == 7  # fan_in + fan_out
 
     def test_directory_sums_children(self):
@@ -242,14 +242,14 @@ class TestAggregate:
                 {
                     "name": "a.ts",
                     "loc": 50,
-                    "findings_open": 1,
+                    "issues_open": 1,
                     "fan_in": 0,
                     "fan_out": 0,
                 },
                 {
                     "name": "b.ts",
                     "loc": 30,
-                    "findings_open": 2,
+                    "issues_open": 2,
                     "fan_in": 3,
                     "fan_out": 4,
                 },
@@ -258,7 +258,7 @@ class TestAggregate:
         agg = _aggregate(tree)
         assert agg["files"] == 2
         assert agg["loc"] == 80
-        assert agg["findings"] == 3
+        assert agg["issues"] == 3
         assert agg["max_coupling"] == 7  # max of (0, 7)
 
     def test_nested_directory_aggregation(self):
@@ -271,14 +271,14 @@ class TestAggregate:
                         {
                             "name": "x.ts",
                             "loc": 10,
-                            "findings_open": 0,
+                            "issues_open": 0,
                             "fan_in": 0,
                             "fan_out": 0,
                         },
                         {
                             "name": "y.ts",
                             "loc": 20,
-                            "findings_open": 1,
+                            "issues_open": 1,
                             "fan_in": 1,
                             "fan_out": 1,
                         },
@@ -287,7 +287,7 @@ class TestAggregate:
                 {
                     "name": "z.ts",
                     "loc": 30,
-                    "findings_open": 0,
+                    "issues_open": 0,
                     "fan_in": 5,
                     "fan_out": 5,
                 },
@@ -296,7 +296,7 @@ class TestAggregate:
         agg = _aggregate(tree)
         assert agg["files"] == 3
         assert agg["loc"] == 60
-        assert agg["findings"] == 1
+        assert agg["issues"] == 1
         assert agg["max_coupling"] == 10  # z.ts has fan_in=5 + fan_out=5
 
     def test_empty_directory(self):
@@ -304,7 +304,7 @@ class TestAggregate:
         agg = _aggregate(tree)
         assert agg["files"] == 0
         assert agg["loc"] == 0
-        assert agg["findings"] == 0
+        assert agg["issues"] == 0
 
 
 # ===========================================================================
@@ -317,10 +317,10 @@ class TestPrintTree:
         node = {
             "name": "foo.ts",
             "loc": 150,
-            "findings_open": 2,
+            "issues_open": 2,
             "fan_in": 0,
             "fan_out": 0,
-            "finding_summaries": [],
+            "issue_summaries": [],
         }
         lines = []
         _print_tree(node, 0, 2, 0, "loc", False, lines)
@@ -328,14 +328,14 @@ class TestPrintTree:
         assert "foo.ts" in lines[0]
         assert "150 LOC" in lines[0]
 
-    def test_leaf_with_findings_shows_warning(self):
+    def test_leaf_with_issues_shows_warning(self):
         node = {
             "name": "bar.ts",
             "loc": 50,
-            "findings_open": 3,
+            "issues_open": 3,
             "fan_in": 0,
             "fan_out": 0,
-            "finding_summaries": [],
+            "issue_summaries": [],
         }
         lines = []
         _print_tree(node, 0, 2, 0, "loc", False, lines)
@@ -345,10 +345,10 @@ class TestPrintTree:
         node = {
             "name": "hub.ts",
             "loc": 100,
-            "findings_open": 0,
+            "issues_open": 0,
             "fan_in": 8,
             "fan_out": 5,
-            "finding_summaries": [],
+            "issue_summaries": [],
         }
         lines = []
         _print_tree(node, 0, 2, 0, "loc", False, lines)
@@ -358,10 +358,10 @@ class TestPrintTree:
         node = {
             "name": "tiny.ts",
             "loc": 5,
-            "findings_open": 0,
+            "issues_open": 0,
             "fan_in": 0,
             "fan_out": 0,
-            "finding_summaries": [],
+            "issue_summaries": [],
         }
         lines = []
         _print_tree(node, 0, 2, 10, "loc", False, lines)
@@ -374,18 +374,18 @@ class TestPrintTree:
                 {
                     "name": "A.tsx",
                     "loc": 100,
-                    "findings_open": 1,
+                    "issues_open": 1,
                     "fan_in": 0,
                     "fan_out": 0,
-                    "finding_summaries": [],
+                    "issue_summaries": [],
                 },
                 {
                     "name": "B.tsx",
                     "loc": 200,
-                    "findings_open": 0,
+                    "issues_open": 0,
                     "fan_in": 0,
                     "fan_out": 0,
-                    "finding_summaries": [],
+                    "issue_summaries": [],
                 },
             ],
         }
@@ -394,7 +394,7 @@ class TestPrintTree:
         assert "components/" in lines[0]
         assert "2 files" in lines[0]
         assert "300 LOC" in lines[0]
-        assert "1 findings" in lines[0]
+        assert "1 issues" in lines[0]
 
     def test_depth_limit_stops_recursion(self):
         tree = {
@@ -406,10 +406,10 @@ class TestPrintTree:
                         {
                             "name": "deep.ts",
                             "loc": 10,
-                            "findings_open": 0,
+                            "issues_open": 0,
                             "fan_in": 0,
                             "fan_out": 0,
-                            "finding_summaries": [],
+                            "issue_summaries": [],
                         },
                     ],
                 },
@@ -428,10 +428,10 @@ class TestPrintTree:
                 {
                     "name": "leaf.ts",
                     "loc": 10,
-                    "findings_open": 0,
+                    "issues_open": 0,
                     "fan_in": 0,
                     "fan_out": 0,
-                    "finding_summaries": [],
+                    "issue_summaries": [],
                 },
             ],
         }
@@ -441,14 +441,14 @@ class TestPrintTree:
         assert lines[0].startswith("root/")
         assert lines[1].startswith("  ")  # 2 spaces per indent level
 
-    def test_detail_mode_shows_finding_summaries(self):
+    def test_detail_mode_shows_issue_summaries(self):
         node = {
             "name": "bad.ts",
             "loc": 50,
-            "findings_open": 2,
+            "issues_open": 2,
             "fan_in": 0,
             "fan_out": 0,
-            "finding_summaries": ["unused import X", "console.log found"],
+            "issue_summaries": ["unused import X", "console.log found"],
         }
         lines = []
         _print_tree(node, 0, 2, 0, "loc", True, lines)
@@ -460,40 +460,40 @@ class TestPrintTree:
         node = {
             "name": "bad.ts",
             "loc": 50,
-            "findings_open": 2,
+            "issues_open": 2,
             "fan_in": 0,
             "fan_out": 0,
-            "finding_summaries": ["unused import X"],
+            "issue_summaries": ["unused import X"],
         }
         lines = []
         _print_tree(node, 0, 2, 0, "loc", False, lines)
         assert len(lines) == 1
 
-    def test_sort_by_findings(self):
+    def test_sort_by_issues(self):
         tree = {
             "name": "root",
             "children": [
                 {
                     "name": "clean.ts",
                     "loc": 200,
-                    "findings_open": 0,
+                    "issues_open": 0,
                     "fan_in": 0,
                     "fan_out": 0,
-                    "finding_summaries": [],
+                    "issue_summaries": [],
                 },
                 {
                     "name": "messy.ts",
                     "loc": 50,
-                    "findings_open": 5,
+                    "issues_open": 5,
                     "fan_in": 0,
                     "fan_out": 0,
-                    "finding_summaries": [],
+                    "issue_summaries": [],
                 },
             ],
         }
         lines = []
-        _print_tree(tree, 0, 2, 0, "findings", False, lines)
-        # messy.ts has more findings, should come first
+        _print_tree(tree, 0, 2, 0, "issues", False, lines)
+        # messy.ts has more issues, should come first
         child_lines = [
             line for line in lines if "ts" in line and "/" not in line.split("(")[0]
         ]
@@ -506,18 +506,18 @@ class TestPrintTree:
                 {
                     "name": "small.ts",
                     "loc": 10,
-                    "findings_open": 0,
+                    "issues_open": 0,
                     "fan_in": 0,
                     "fan_out": 0,
-                    "finding_summaries": [],
+                    "issue_summaries": [],
                 },
                 {
                     "name": "big.ts",
                     "loc": 500,
-                    "findings_open": 0,
+                    "issues_open": 0,
                     "fan_in": 0,
                     "fan_out": 0,
-                    "finding_summaries": [],
+                    "issue_summaries": [],
                 },
             ],
         }
@@ -535,18 +535,18 @@ class TestPrintTree:
                 {
                     "name": "isolated.ts",
                     "loc": 100,
-                    "findings_open": 0,
+                    "issues_open": 0,
                     "fan_in": 0,
                     "fan_out": 0,
-                    "finding_summaries": [],
+                    "issue_summaries": [],
                 },
                 {
                     "name": "coupled.ts",
                     "loc": 100,
-                    "findings_open": 0,
+                    "issues_open": 0,
                     "fan_in": 10,
                     "fan_out": 10,
-                    "finding_summaries": [],
+                    "issue_summaries": [],
                 },
             ],
         }
@@ -562,10 +562,10 @@ class TestPrintTree:
         node = {
             "name": "ok.ts",
             "loc": 50,
-            "findings_open": 0,
+            "issues_open": 0,
             "fan_in": 3,
             "fan_out": 5,
-            "finding_summaries": [],
+            "issue_summaries": [],
         }
         lines = []
         _print_tree(node, 0, 2, 0, "loc", False, lines)
@@ -578,10 +578,10 @@ class TestPrintTree:
                 {
                     "name": "a.ts",
                     "loc": 3,
-                    "findings_open": 0,
+                    "issues_open": 0,
                     "fan_in": 0,
                     "fan_out": 0,
-                    "finding_summaries": [],
+                    "issue_summaries": [],
                 },
             ],
         }
@@ -608,7 +608,7 @@ class TestConstants:
 
 class TestLoadCmdContext:
     def test_uses_preloaded_state_when_available(self, monkeypatch):
-        sentinel_state = {"findings": {"x": 1}}
+        sentinel_state = {"issues": {"x": 1}}
 
         monkeypatch.setattr(
             "desloppify.app.output._viz_cmd_context.resolve_lang", lambda _a: None

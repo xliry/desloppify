@@ -7,6 +7,9 @@ import importlib.util
 import logging
 from pathlib import Path
 
+from desloppify.base.discovery.paths import get_project_root
+from desloppify.base.output.fallbacks import log_best_effort_failure
+
 from . import registry_state
 
 logger = logging.getLogger(__name__)
@@ -44,10 +47,19 @@ def _report_load_errors_for_load_all() -> None:
         return
 
 
-def load_all() -> None:
+def load_all(*, force_reload: bool = False) -> None:
     """Import all language modules to trigger registration."""
-    if registry_state.was_load_attempted():
+    if force_reload:
+        registry_state.clear()
+    elif registry_state.was_load_attempted():
+        _report_load_errors_for_load_all()
         return
+
+    # Mark load-attempted early to guard against re-entrancy: if a plugin
+    # import transitively triggers load_all() again (e.g. via get_lang()),
+    # the was_load_attempted() check above will short-circuit instead of
+    # re-importing partially-initialised modules.
+    registry_state.set_load_attempted(True)
 
     lang_dir = Path(__file__).resolve().parent
     if lang_dir.name == "_framework":
@@ -82,8 +94,6 @@ def load_all() -> None:
 
     # Discover user plugins from <active-project-root>/.desloppify/plugins/*.py
     try:
-        from desloppify.core._internal.text_utils import get_project_root
-
         user_plugin_dir = get_project_root() / ".desloppify" / "plugins"
         if user_plugin_dir.is_dir():
             for f in sorted(user_plugin_dir.glob("*.py")):
@@ -100,24 +110,17 @@ def load_all() -> None:
                         )
                         failures[f"user:{f.name}"] = ex
     except (OSError, ImportError) as exc:
-        logger.debug("User plugin discovery skipped: %s", exc)
+        log_best_effort_failure(logger, "discover user plugins", exc)
 
-    # Retry plugins that failed due to a circular import — after the first pass
-    # all framework modules (e.g. generic.py) are fully initialised, so a
-    # second attempt usually succeeds.
-    circular_names = [
-        name for name, ex in failures.items()
-        if isinstance(ex, ImportError) and (
-            "partially initialized" in str(ex) or "circular import" in str(ex)
-        )
-    ]
-    for module_name in circular_names:
-        try:
-            importlib.import_module(module_name, base_package)
-            del failures[module_name]
-        except _PLUGIN_IMPORT_ERRORS:
-            pass
-
-    registry_state.set_load_attempted(True)
     registry_state.set_load_errors(failures)
     _report_load_errors_for_load_all()
+
+
+def reload_all() -> None:
+    """Force a full in-process language plugin reload."""
+    from desloppify.base.registry import reset_registered_detectors
+    from desloppify.engine._scoring.policy.core import reset_registered_scoring_policies
+
+    reset_registered_detectors()
+    reset_registered_scoring_policies()
+    load_all(force_reload=True)

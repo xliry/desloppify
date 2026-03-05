@@ -5,17 +5,20 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from desloppify.core.discovery_api import safe_write_text
-from desloppify.scoring import CONFIDENCE_WEIGHTS, HOLISTIC_MULTIPLIER
-from desloppify.state import (
+from desloppify.base.discovery.file_paths import safe_write_text
+from desloppify.base.scoring_constants import (
+    CONFIDENCE_WEIGHTS,
+    HOLISTIC_MULTIPLIER,
+)
+from desloppify.engine._state.schema import Issue, StateModel, utc_now
+from desloppify.engine._state.schema_scores import (
     get_objective_score,
     get_overall_score,
     get_strict_score,
-    utc_now,
 )
 
 
-def _score_snapshot(state: dict[str, Any]) -> tuple[float, float, float]:
+def _score_snapshot(state: StateModel) -> tuple[float, float, float]:
     return (
         get_overall_score(state) or 0.0,
         get_objective_score(state) or 0.0,
@@ -23,14 +26,14 @@ def _score_snapshot(state: dict[str, Any]) -> tuple[float, float, float]:
     )
 
 
-def empty_plan(state: dict[str, Any], lang_name: str) -> str:
-    """Generate a short plan when no holistic findings are open."""
+def render_empty_remediation_plan(state: StateModel, lang_name: str) -> str:
+    """Generate a short plan when no holistic issues are open."""
     overall, objective, strict = _score_snapshot(state)
     return (
         "# Holistic Review: Remediation Plan\n\n"
         f"**Scores**: overall {overall:.1f}/100 · "
         f"objective {objective:.1f}/100 · strict {strict:.1f}/100\n\n"
-        "No open holistic findings. The codebase is clean at the architectural level.\n\n"
+        "No open holistic issues. The codebase is clean at the architectural level.\n\n"
         "To start a new holistic review cycle:\n"
         "```bash\n"
         f"desloppify --lang {lang_name} review --prepare --path <src>\n"
@@ -38,20 +41,20 @@ def empty_plan(state: dict[str, Any], lang_name: str) -> str:
     )
 
 
-def _collect_holistic_findings(
-    state: dict[str, Any],
-) -> list[tuple[str, dict[str, Any]]]:
-    findings = state.get("findings", {})
+def _collect_holistic_issues(
+    state: StateModel,
+) -> list[tuple[str, Issue]]:
+    issues = state.get("issues", {})
     return [
-        (finding_id, finding)
-        for finding_id, finding in findings.items()
-        if finding["status"] == "open"
-        and finding.get("detector") == "review"
-        and finding.get("detail", {}).get("holistic")
+        (issue_id, issue)
+        for issue_id, issue in issues.items()
+        if issue["status"] == "open"
+        and issue.get("detector") == "review"
+        and issue.get("detail", {}).get("holistic")
     ]
 
 
-def _review_potential(state: dict[str, Any]) -> int:
+def _review_potential(state: StateModel) -> int:
     total = 0
     for language_potentials in state.get("potentials", {}).values():
         total += language_potentials.get("review", 0)
@@ -66,20 +69,20 @@ def _entry_weight(confidence: str) -> float:
 
 
 def _build_entries(
-    holistic_findings: list[tuple[str, dict[str, Any]]], potential: int
+    holistic_issues: list[tuple[str, Issue]], potential: int
 ) -> tuple[list[dict[str, Any]], float]:
     entries: list[dict[str, Any]] = []
     total_weight = 0.0
 
-    for finding_id, finding in holistic_findings:
-        detail = finding.get("detail", {})
-        confidence = finding.get("confidence", "low")
+    for issue_id, issue in holistic_issues:
+        detail = issue.get("detail", {})
+        confidence = issue.get("confidence", "low")
         weight = _entry_weight(confidence)
         entries.append(
             {
-                "id": finding_id,
+                "id": issue_id,
                 "dimension": detail.get("dimension", "unknown"),
-                "summary": finding.get("summary", ""),
+                "summary": issue.get("summary", ""),
                 "confidence": confidence,
                 "weight": weight,
                 "impact_pts": (weight / potential * 100) if potential > 0 else 0,
@@ -111,7 +114,7 @@ def _render_header(
         f"**Current scores**: overall {overall:.1f}/100 · "
         f"objective {objective:.1f}/100 · strict {strict:.1f}/100  "
     )
-    append(f"**Open holistic findings**: {len(entries)}  ")
+    append(f"**Open holistic issues**: {len(entries)}  ")
     append(f"**Estimated improvement**: ~{total_impact:.1f} pts if all addressed\n")
     append("---\n")
 
@@ -119,16 +122,16 @@ def _render_header(
 def _render_usage(lines: list[str], lang_name: str) -> None:
     append = lines.append
     append("## How to use this plan\n")
-    append("1. Work through findings in priority order (highest impact first)")
-    append("2. For each finding, follow the suggested fix steps")
-    append("3. After fixing, run the `resolve` command shown for that finding")
-    append("4. Run `desloppify scan` to update automated findings and score")
+    append("1. Work through issues in priority order (highest impact first)")
+    append("2. For each issue, follow the suggested fix steps")
+    append("3. After fixing, run the `resolve` command shown for that issue")
+    append("4. Run `desloppify scan` to update automated issues and score")
     append("5. To re-evaluate holistic issues, re-run the full cycle:")
     append(
         f"   `desloppify --lang {lang_name} review --prepare --path <src>`"
     )
     append("   Then have an agent investigate and import — previously addressed")
-    append("   findings auto-resolve if not re-reported.\n")
+    append("   issues auto-resolve if not re-reported.\n")
     append("---\n")
 
 
@@ -176,31 +179,31 @@ def _render_entry(
 def _render_re_evaluate(lines: list[str], lang_name: str) -> None:
     append = lines.append
     append("## Re-evaluate\n")
-    append("After addressing findings, re-run the holistic review cycle:\n")
+    append("After addressing issues, re-run the holistic review cycle:\n")
     append("```bash")
     append(f"desloppify --lang {lang_name} review --prepare --path <src>")
-    append("# Agent investigates batches and writes findings.json")
-    append(f"desloppify --lang {lang_name} review --import findings.json")
+    append("# Agent investigates batches and writes issues.json")
+    append(f"desloppify --lang {lang_name} review --import issues.json")
     append("```\n")
     append(
-        "Previously addressed findings will auto-resolve if not re-reported by the agent."
+        "Previously addressed issues will auto-resolve if not re-reported by the agent."
     )
     append("")
 
 
 def generate_remediation_plan(
-    state: dict[str, Any], lang_name: str, *, output_path: Path | None = None
+    state: StateModel, lang_name: str, *, output_path: Path | None = None
 ) -> str:
-    """Generate prioritized markdown remediation steps for open holistic findings."""
-    holistic_findings = _collect_holistic_findings(state)
-    if not holistic_findings:
-        content = empty_plan(state, lang_name)
+    """Generate prioritized markdown remediation steps for open holistic issues."""
+    holistic_issues = _collect_holistic_issues(state)
+    if not holistic_issues:
+        content = render_empty_remediation_plan(state, lang_name)
         if output_path:
             safe_write_text(output_path, content)
         return content
 
     overall, objective, strict = _score_snapshot(state)
-    entries, total_impact = _build_entries(holistic_findings, _review_potential(state))
+    entries, total_impact = _build_entries(holistic_issues, _review_potential(state))
 
     lines: list[str] = []
     _render_header(lines, overall, objective, strict, entries, total_impact)

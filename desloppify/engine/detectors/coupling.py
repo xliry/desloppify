@@ -9,9 +9,9 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-from desloppify.core.fallbacks import log_best_effort_failure
-from desloppify.core.file_paths import resolve_scan_file
-from desloppify.core.discovery_api import rel
+from desloppify.base.discovery.file_paths import rel
+from desloppify.base.output.fallbacks import log_best_effort_failure
+from desloppify.base.discovery.file_paths import count_lines, resolve_scan_file
 
 logger = logging.getLogger(__name__)
 
@@ -26,11 +26,6 @@ class CouplingEdgeCounts:
 
     violating_edges: int = 0
     eligible_edges: int = 0
-
-    @property
-    def total_edges(self) -> int:
-        """Backward-compatible alias for historical naming."""
-        return self.eligible_edges
 
 
 def _norm_path(path: str) -> str:
@@ -165,7 +160,9 @@ def detect_boundary_candidates(
         if len(tool_areas) == 1 and not has_non_tool_importer:
             try:
                 resolved = resolve_scan_file(filepath, scan_root=path)
-                loc = len(resolved.read_text().splitlines())
+                if not resolved.exists():
+                    raise FileNotFoundError(resolved)
+                loc = count_lines(resolved)
             except (OSError, UnicodeDecodeError) as exc:
                 log_best_effort_failure(
                     logger,

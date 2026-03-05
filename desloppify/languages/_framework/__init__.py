@@ -4,12 +4,12 @@ This package contains framework code used by all language plugins:
 - config/runtime contracts
 - plugin discovery/registration state
 - shared detect-command factories
-- shared finding factories and facade helpers
+- shared issue factories and facade helpers
 """
 
 from __future__ import annotations
 
-from typing import Any
+from pathlib import Path
 
 from .base.types import (
     BoundaryRule,
@@ -21,28 +21,38 @@ from .base.types import (
 )
 
 
-def make_lang_config(*args: Any, **kwargs: Any):
+def make_lang_config(name: str, cfg_cls: type) -> LangConfig:
     from .resolution import make_lang_config as _make_lang_config
 
-    return _make_lang_config(*args, **kwargs)
+    return _make_lang_config(name, cfg_cls)
 
 
-def get_lang(*args: Any, **kwargs: Any):
+def get_lang(name: str, *, refresh_registry: bool = False) -> LangConfig:
     from .resolution import get_lang as _get_lang
 
-    return _get_lang(*args, **kwargs)
+    if not refresh_registry:
+        return _get_lang(name)
+    return _get_lang(name, refresh_registry=True)
 
 
-def auto_detect_lang(*args: Any, **kwargs: Any):
+def auto_detect_lang(
+    project_root: Path,
+    *,
+    refresh_registry: bool = False,
+) -> str | None:
     from .resolution import auto_detect_lang as _auto_detect_lang
 
-    return _auto_detect_lang(*args, **kwargs)
+    if not refresh_registry:
+        return _auto_detect_lang(project_root)
+    return _auto_detect_lang(project_root, refresh_registry=True)
 
 
-def available_langs(*args: Any, **kwargs: Any):
+def available_langs(*, refresh_registry: bool = False) -> list[str]:
     from .resolution import available_langs as _available_langs
 
-    return _available_langs(*args, **kwargs)
+    if not refresh_registry:
+        return _available_langs()
+    return _available_langs(refresh_registry=True)
 
 __all__ = [
     "BoundaryRule",

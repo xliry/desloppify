@@ -3,7 +3,7 @@
 Each adapter must:
   1. Return None (not crash) when the tool is not installed.
   2. Correctly parse the tool's JSON output format.
-  3. Produce entries/findings in the structure the phase runners expect.
+  3. Produce entries/issues in the structure the phase runners expect.
 """
 
 from __future__ import annotations
@@ -278,7 +278,7 @@ class TestBanditAdapter:
         assert result.status.state == "timeout"
         assert result.status.coverage() is not None
 
-    def test_returns_empty_on_no_findings(self):
+    def test_returns_empty_on_no_issues(self):
         result = self._run_detect(stdout=self._bandit_result([]))
         assert result.status.state == "ok"
         assert result.entries == []
@@ -298,7 +298,7 @@ class TestBanditAdapter:
         assert result.entries == []
         assert result.status.coverage() is not None
 
-    def test_parses_high_severity_finding(self):
+    def test_parses_high_severity_issue(self):
         raw = [
             {
                 "filename": "/project/app.py",
@@ -322,7 +322,7 @@ class TestBanditAdapter:
         assert e["detail"]["kind"] == "B102"
         assert e["detail"]["source"] == "bandit"
 
-    def test_parses_medium_severity_finding(self):
+    def test_parses_medium_severity_issue(self):
         raw = [
             {
                 "filename": "/project/api.py",
@@ -348,7 +348,7 @@ class TestBanditAdapter:
                 "filename": "/project/utils.py",
                 "issue_severity": "LOW",
                 "issue_confidence": "LOW",
-                "issue_text": "Very noisy low-signal finding.",
+                "issue_text": "Very noisy low-signal issue.",
                 "line_number": 5,
                 "test_id": "B999",
                 "test_name": "fake_low_rule",
@@ -377,7 +377,7 @@ class TestBanditAdapter:
         result = self._run_detect(stdout=self._bandit_result(raw))
         assert result.entries == []
 
-    def test_finding_name_is_stable_and_unique(self):
+    def test_issue_name_is_stable_and_unique(self):
         raw = [
             {
                 "filename": "/project/app.py",
@@ -474,9 +474,9 @@ class TestBanditExcludeIntegration:
         fake_exclude_dirs = ["/project/src/.venv", "/project/src/__pycache__", "/project/src/vendor"]
         files = ["/project/src/app.py", "/project/src/utils.py"]
         with patch(
-            "desloppify.languages.python.detect_with_bandit", _fake_bandit
+            "desloppify.languages.python._security.detect_with_bandit", _fake_bandit
         ), patch(
-            "desloppify.languages.python.collect_exclude_dirs",
+            "desloppify.languages.python._security.collect_exclude_dirs",
             return_value=fake_exclude_dirs,
         ):
             config.detect_lang_security_detailed(files, zone_map=None)
@@ -845,20 +845,20 @@ class TestImportLinterAdapter:
 # ── collect_exclude_dirs ─────────────────────────────────────────────────────
 
 
-from desloppify.core.source_discovery import collect_exclude_dirs  # noqa: E402
+from desloppify.base.discovery.source import collect_exclude_dirs  # noqa: E402
 
 
 class TestCollectExcludeDirs:
     def test_returns_absolute_paths(self, tmp_path):
         with patch(
-            "desloppify.core.source_discovery.get_exclusions", return_value=()
+            "desloppify.base.discovery.source.get_exclusions", return_value=()
         ):
             result = collect_exclude_dirs(tmp_path)
         assert all(p.startswith(str(tmp_path)) for p in result)
 
     def test_includes_default_non_glob_entries(self, tmp_path):
         with patch(
-            "desloppify.core.source_discovery.get_exclusions", return_value=()
+            "desloppify.base.discovery.source.get_exclusions", return_value=()
         ):
             result = collect_exclude_dirs(tmp_path)
         basenames = {p.rsplit("/", 1)[-1] for p in result}
@@ -870,16 +870,15 @@ class TestCollectExcludeDirs:
 
     def test_excludes_glob_patterns(self, tmp_path):
         with patch(
-            "desloppify.core.source_discovery.get_exclusions", return_value=()
+            "desloppify.base.discovery.source.get_exclusions", return_value=()
         ):
             result = collect_exclude_dirs(tmp_path)
-        basenames = {p.rsplit("/", 1)[-1] for p in result}
         # *.egg-info and .venv* are glob patterns and should be excluded
         assert not any("*" in p for p in result)
 
     def test_includes_runtime_exclusions(self, tmp_path):
         with patch(
-            "desloppify.core.source_discovery.get_exclusions",
+            "desloppify.base.discovery.source.get_exclusions",
             return_value=("vendor", "third_party"),
         ):
             result = collect_exclude_dirs(tmp_path)
@@ -889,7 +888,7 @@ class TestCollectExcludeDirs:
 
     def test_skips_runtime_glob_exclusions(self, tmp_path):
         with patch(
-            "desloppify.core.source_discovery.get_exclusions",
+            "desloppify.base.discovery.source.get_exclusions",
             return_value=("vendor/**",),
         ):
             result = collect_exclude_dirs(tmp_path)
@@ -899,7 +898,7 @@ class TestCollectExcludeDirs:
     def test_deduplicates(self, tmp_path):
         """Runtime exclusion that overlaps with DEFAULT_EXCLUSIONS doesn't produce dupes."""
         with patch(
-            "desloppify.core.source_discovery.get_exclusions",
+            "desloppify.base.discovery.source.get_exclusions",
             return_value=("node_modules",),
         ):
             result = collect_exclude_dirs(tmp_path)

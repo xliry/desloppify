@@ -5,9 +5,13 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from desloppify.base.discovery.source import find_py_files
 from desloppify.engine.detectors.base import ClassInfo, FunctionInfo
-from desloppify.core.discovery_api import find_py_files
 from desloppify.languages.python.extractors_shared import find_block_end, read_file
+
+_DATACLASS_DECORATOR_RE = re.compile(
+    r"^(?:[A-Za-z_][A-Za-z0-9_]*\.)*dataclass(?:\s*\([^)]*\))?$"
+)
 
 
 def extract_py_classes(path: Path) -> list[ClassInfo]:
@@ -45,7 +49,12 @@ def _extract_classes_from_file(filepath: str, lines: list[str]) -> list[ClassInf
             continue
 
         methods = _extract_methods(lines, class_start + 1, class_end)
-        attributes = _extract_init_attributes(lines, class_start, class_end)
+        attributes = _extract_init_attributes(
+            lines,
+            class_start,
+            class_end,
+            dataclass_decorated=_has_dataclass_decorator(lines, class_start),
+        )
         base_list = (
             [base.strip() for base in bases.split(",") if base.strip()] if bases else []
         )
@@ -102,12 +111,18 @@ def _extract_methods(lines: list[str], start: int, end: int) -> list[FunctionInf
 
 
 def _extract_init_attributes(
-    lines: list[str], class_start: int, class_end: int
+    lines: list[str],
+    class_start: int,
+    class_end: int,
+    *,
+    dataclass_decorated: bool = False,
 ) -> list[str]:
     """Extract self.x = ... attribute names from __init__."""
     attrs = set()
     in_init = False
     init_indent = 0
+    class_indent = len(lines[class_start]) - len(lines[class_start].lstrip())
+    class_field_re = re.compile(r"^\s*(\w+)\s*:\s*[^=].*$")
 
     for idx in range(class_start, class_end):
         stripped = lines[idx].strip()
@@ -125,7 +140,44 @@ def _extract_init_attributes(
             for attr_match in re.finditer(r"self\.(\w+)\s*=", lines[idx]):
                 attrs.add(attr_match.group(1))
 
+    if dataclass_decorated:
+        for idx in range(class_start + 1, class_end):
+            line = lines[idx]
+            stripped = line.strip()
+            if (
+                not stripped
+                or stripped.startswith("#")
+                or stripped.startswith("@")
+                or stripped.startswith("def ")
+                or stripped.startswith("async def ")
+            ):
+                continue
+            indent = len(line) - len(line.lstrip())
+            # Count only class-body attribute annotations, not nested blocks.
+            if indent != class_indent + 4:
+                continue
+            match = class_field_re.match(stripped)
+            if match:
+                attrs.add(match.group(1))
+
     return sorted(attrs)
+
+
+def _has_dataclass_decorator(lines: list[str], class_start: int) -> bool:
+    """Check if the class has @dataclass / @dataclasses.dataclass decorator."""
+    idx = class_start - 1
+    while idx >= 0:
+        stripped = lines[idx].strip()
+        if not stripped:
+            idx -= 1
+            continue
+        if not stripped.startswith("@"):
+            break
+        decorator = stripped[1:].split("#", 1)[0].strip()
+        if _DATACLASS_DECORATOR_RE.match(decorator):
+            return True
+        idx -= 1
+    return False
 
 
 __all__ = ["extract_py_classes"]

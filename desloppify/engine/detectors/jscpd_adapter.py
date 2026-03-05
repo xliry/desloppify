@@ -16,7 +16,14 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from desloppify.core.discovery_api import collect_exclude_dirs, get_exclusions
+from desloppify.base.discovery.source import (
+
+    collect_exclude_dirs,
+
+    get_exclusions,
+
+)
+from desloppify.base.output.fallbacks import warn_best_effort
 
 logger = logging.getLogger(__name__)
 
@@ -95,12 +102,12 @@ def _parse_jscpd_report(report: dict, scan_path: Path) -> list[dict]:
 
     path_resolved = scan_path.resolve()
 
-    # Cluster pairs by SHA1(fragment.strip()[:200])[:16]
+    # Cluster pairs by SHA256(fragment.strip()[:200])[:16]
     clusters: dict[str, dict] = {}
 
     for dup in duplicates:
         fragment = dup.get("fragment", "")
-        fragment_key = hashlib.sha1(
+        fragment_key = hashlib.sha256(
             fragment.strip()[:200].encode("utf-8", errors="replace")
         ).hexdigest()[:16]
 
@@ -162,6 +169,8 @@ def detect_with_jscpd(path: Path) -> list[dict] | None:
     """Run jscpd on *path* and return duplication entries, or None on failure."""
     with tempfile.TemporaryDirectory() as tmpdir:
         try:
+            # Use explicit argv (no shell), a bounded timeout, and check=True so
+            # non-zero exits are surfaced and handled below.
             subprocess.run(
                 [
                     "npx",
@@ -183,14 +192,35 @@ def detect_with_jscpd(path: Path) -> list[dict] | None:
                 capture_output=True,
                 text=True,
                 timeout=120,
+                check=True,
             )
         except FileNotFoundError:
+            warn_best_effort(
+                "Boilerplate duplication detection skipped: npx/jscpd not found. "
+                "Install with `npm install -g jscpd`."
+            )
             logger.debug("jscpd: npx not found — skipping boilerplate duplication detection")
             return None
+        except subprocess.CalledProcessError as exc:
+            warn_best_effort(
+                "Boilerplate duplication detection skipped: npx/jscpd exited with errors."
+            )
+            logger.debug(
+                "jscpd: non-zero exit (%s): %s",
+                exc.returncode,
+                (exc.stderr or "").strip(),
+            )
+            return None
         except OSError as exc:
+            warn_best_effort(
+                "Boilerplate duplication detection skipped: npx/jscpd failed to run."
+            )
             logger.debug("jscpd: OS error running npx/jscpd: %s", exc)
             return None
         except subprocess.TimeoutExpired:
+            warn_best_effort(
+                "Boilerplate duplication detection skipped: jscpd timed out after 120s."
+            )
             logger.debug("jscpd: timed out")
             return None
 

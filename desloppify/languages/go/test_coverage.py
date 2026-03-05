@@ -5,6 +5,7 @@ Originally contributed by tinker495 (KyuSeok Jung) in PR #128.
 
 from __future__ import annotations
 
+import os
 import re
 
 ASSERT_PATTERNS = [
@@ -37,9 +38,46 @@ def has_testable_logic(_filepath: str, content: str) -> bool:
 
 
 def resolve_import_spec(
-    spec: str, _test_path: str, production_files: set[str]
+    spec: str, test_path: str, production_files: set[str]
 ) -> str | None:
-    """Go tests use same-package layout, not import spec resolution."""
+    """Best-effort Go import-path to source-file resolution for direct imports."""
+    normalized = spec.strip().strip("\"'`").replace("\\", "/").strip("/")
+    if not normalized or normalized in {"C", "unsafe"}:
+        return None
+
+    segments = [segment for segment in normalized.split("/") if segment]
+    if not segments:
+        return None
+
+    candidates: list[str] = []
+    for idx in range(len(segments)):
+        tail = "/".join(segments[idx:])
+        if not tail:
+            continue
+        leaf = tail.split("/")[-1]
+        candidates.append(f"{tail}.go")
+        candidates.append(f"{tail}/{leaf}.go")
+
+    test_path = test_path.replace("\\", "/").strip()
+    if test_path:
+        test_dir = os.path.dirname(test_path)
+        leaf = segments[-1]
+        candidates.append(f"{test_dir}/{leaf}.go")
+        parent = os.path.dirname(test_dir)
+        if parent:
+            candidates.append(f"{parent}/{leaf}.go")
+
+    normalized_production = {
+        file_path.replace("\\", "/").strip("/"): file_path for file_path in production_files
+    }
+    for candidate in candidates:
+        normalized_candidate = candidate.replace("\\", "/").strip("/")
+        if normalized_candidate in normalized_production:
+            return normalized_production[normalized_candidate]
+        suffix = f"/{normalized_candidate}"
+        for normalized_path, original in normalized_production.items():
+            if normalized_path.endswith(suffix):
+                return original
     return None
 
 

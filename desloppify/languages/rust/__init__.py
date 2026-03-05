@@ -29,3 +29,8 @@ generic_lang(
     detect_markers=["Cargo.toml"],
     treesitter_spec=RUST_SPEC,
 )
+
+__all__ = [
+    "generic_lang",
+    "RUST_SPEC",
+]

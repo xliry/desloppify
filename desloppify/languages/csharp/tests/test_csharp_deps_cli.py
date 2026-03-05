@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from desloppify.languages.csharp.deps.cli import cmd_cycles, cmd_deps
+from desloppify.languages.csharp.deps.cli import render_cycles_cli, render_deps_cli
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -35,7 +35,7 @@ def _stub_roslyn_resolver(value=None):
 
 
 # ---------------------------------------------------------------------------
-# cmd_deps — single-file mode
+# render_deps_cli — single-file mode
 # ---------------------------------------------------------------------------
 
 def test_cmd_deps_single_file_text_output(capsys, monkeypatch):
@@ -51,7 +51,7 @@ def test_cmd_deps_single_file_text_output(capsys, monkeypatch):
 
     graph = {}
     args = _make_args(file="Services/Greeter.cs")
-    cmd_deps(
+    render_deps_cli(
         args,
         build_dep_graph=_stub_graph_builder(graph),
         resolve_roslyn_cmd=_stub_roslyn_resolver(),
@@ -78,7 +78,7 @@ def test_cmd_deps_single_file_json_output(capsys, monkeypatch):
 
     graph = {}
     args = _make_args(file="Program.cs", json_flag=True)
-    cmd_deps(
+    render_deps_cli(
         args,
         build_dep_graph=_stub_graph_builder(graph),
         resolve_roslyn_cmd=_stub_roslyn_resolver(),
@@ -93,7 +93,7 @@ def test_cmd_deps_single_file_json_output(capsys, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# cmd_deps — overview (no --file)
+# render_deps_cli — overview (no --file)
 # ---------------------------------------------------------------------------
 
 def test_cmd_deps_overview_text_output(capsys, monkeypatch):
@@ -109,7 +109,7 @@ def test_cmd_deps_overview_text_output(capsys, monkeypatch):
         "/fake/C.cs": {"importer_count": 0, "import_count": 0},
     }
     args = _make_args()
-    cmd_deps(
+    render_deps_cli(
         args,
         build_dep_graph=_stub_graph_builder(graph),
         resolve_roslyn_cmd=_stub_roslyn_resolver(),
@@ -135,7 +135,7 @@ def test_cmd_deps_overview_json_output(capsys, monkeypatch):
         "/fake/B.cs": {"importer_count": 2, "import_count": 3},
     }
     args = _make_args(json_flag=True)
-    cmd_deps(
+    render_deps_cli(
         args,
         build_dep_graph=_stub_graph_builder(graph),
         resolve_roslyn_cmd=_stub_roslyn_resolver(),
@@ -163,7 +163,7 @@ def test_cmd_deps_overview_respects_top_limit(capsys, monkeypatch):
         for i in range(10)
     }
     args = _make_args(json_flag=True, top=3)
-    cmd_deps(
+    render_deps_cli(
         args,
         build_dep_graph=_stub_graph_builder(graph),
         resolve_roslyn_cmd=_stub_roslyn_resolver(),
@@ -181,7 +181,7 @@ def test_cmd_deps_overview_empty_graph(capsys, monkeypatch):
     )
 
     args = _make_args()
-    cmd_deps(
+    render_deps_cli(
         args,
         build_dep_graph=_stub_graph_builder({}),
         resolve_roslyn_cmd=_stub_roslyn_resolver(),
@@ -192,7 +192,7 @@ def test_cmd_deps_overview_empty_graph(capsys, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# cmd_cycles
+# render_cycles_cli
 # ---------------------------------------------------------------------------
 
 def test_cmd_cycles_no_cycles_text(capsys, monkeypatch):
@@ -203,7 +203,7 @@ def test_cmd_cycles_no_cycles_text(capsys, monkeypatch):
     )
 
     args = _make_args()
-    cmd_cycles(
+    render_cycles_cli(
         args,
         build_dep_graph=_stub_graph_builder({}),
         resolve_roslyn_cmd=_stub_roslyn_resolver(),
@@ -228,7 +228,7 @@ def test_cmd_cycles_with_cycles_text(capsys, monkeypatch):
     )
 
     args = _make_args()
-    cmd_cycles(
+    render_cycles_cli(
         args,
         build_dep_graph=_stub_graph_builder({}),
         resolve_roslyn_cmd=_stub_roslyn_resolver(),
@@ -260,7 +260,7 @@ def test_cmd_cycles_json_output(capsys, monkeypatch):
     )
 
     args = _make_args(json_flag=True)
-    cmd_cycles(
+    render_cycles_cli(
         args,
         build_dep_graph=_stub_graph_builder({}),
         resolve_roslyn_cmd=_stub_roslyn_resolver(),
@@ -289,7 +289,7 @@ def test_cmd_cycles_truncates_long_cycles(capsys, monkeypatch):
     )
 
     args = _make_args()
-    cmd_cycles(
+    render_cycles_cli(
         args,
         build_dep_graph=_stub_graph_builder({}),
         resolve_roslyn_cmd=_stub_roslyn_resolver(),
@@ -316,7 +316,7 @@ def test_cmd_cycles_respects_top_limit(capsys, monkeypatch):
     )
 
     args = _make_args(top=3)
-    cmd_cycles(
+    render_cycles_cli(
         args,
         build_dep_graph=_stub_graph_builder({}),
         resolve_roslyn_cmd=_stub_roslyn_resolver(),
@@ -330,11 +330,11 @@ def test_cmd_cycles_respects_top_limit(capsys, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# cmd_deps / cmd_cycles — graph builder delegation
+# render_deps_cli / render_cycles_cli — graph builder delegation
 # ---------------------------------------------------------------------------
 
 def test_cmd_deps_passes_path_and_roslyn_to_builder():
-    """cmd_deps delegates to build_dep_graph with the right path and roslyn_cmd."""
+    """render_deps_cli delegates to build_dep_graph with the right path and roslyn_cmd."""
     captured = {}
 
     def fake_build(path, *, roslyn_cmd=None):
@@ -343,7 +343,7 @@ def test_cmd_deps_passes_path_and_roslyn_to_builder():
         return {}
 
     args = _make_args(path="/my/project")
-    cmd_deps(
+    render_deps_cli(
         args,
         build_dep_graph=fake_build,
         resolve_roslyn_cmd=lambda a: "my-roslyn",

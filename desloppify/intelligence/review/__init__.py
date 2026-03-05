@@ -1,20 +1,28 @@
-"""Subjective code review: context building, file selection, and finding import.
+"""Subjective code review: context building, file selection, and issue import.
 
 Desloppify prepares structured review data (context + file batches + prompts)
-for an AI agent to evaluate. The agent returns structured findings that are
+for an AI agent to evaluate. The agent returns structured issues that are
 imported back into state like any other detector.
 
 No LLM calls happen here — this module is pure Python.
 """
 
+from pathlib import Path
+from typing import Any
+
+from desloppify.engine._state.schema import StateModel, utc_now
+from desloppify.intelligence.review.importing.contracts_types import ReviewImportPayload
+
 from desloppify.intelligence.integrity import (
-    is_holistic_subjective_finding,
+    is_holistic_subjective_issue,
     is_subjective_review_open,
     subjective_review_open_breakdown,
     unassessed_subjective_dimensions,
 )
 from desloppify.intelligence.review.context import ReviewContext, build_review_context
-from desloppify.intelligence.review.context_holistic import build_holistic_context
+from desloppify.intelligence.review.context_holistic.orchestrator import (
+    build_holistic_context,
+)
 from desloppify.intelligence.review.dimensions.data import load_dimensions_for_lang
 from desloppify.intelligence.review.dimensions.holistic import (
     DIMENSION_PROMPTS,
@@ -27,12 +35,6 @@ from desloppify.intelligence.review.dimensions.lang import (
     get_lang_guidance,
 )
 from desloppify.intelligence.review.dimensions.selection import resolve_dimensions
-from desloppify.intelligence.review.importing.holistic import (
-    import_holistic_findings,
-)
-from desloppify.intelligence.review.importing.per_file import (
-    import_review_findings,
-)
 from desloppify.intelligence.review.policy import (
     DimensionPolicy,
     append_custom_dimensions,
@@ -56,6 +58,50 @@ from desloppify.intelligence.review.selection import (
     is_low_value_file,
     select_files_for_review,
 )
+
+
+def import_review_issues(
+    issues_data: ReviewImportPayload,
+    state: StateModel,
+    lang_name: str,
+    *,
+    project_root: Path | str | None = None,
+    utc_now_fn=utc_now,
+) -> dict[str, Any]:
+    """Lazy wrapper to avoid import cycles during package initialization."""
+    from desloppify.intelligence.review.importing.per_file import (
+        import_review_issues as _import_review_issues,
+    )
+
+    return _import_review_issues(
+        issues_data,
+        state,
+        lang_name,
+        project_root=project_root,
+        utc_now_fn=utc_now_fn,
+    )
+
+
+def import_holistic_issues(
+    issues_data: ReviewImportPayload,
+    state: StateModel,
+    lang_name: str,
+    *,
+    project_root: Path | str | None = None,
+    utc_now_fn=utc_now,
+) -> dict[str, Any]:
+    """Lazy wrapper to avoid import cycles during package initialization."""
+    from desloppify.intelligence.review.importing.holistic import (
+        import_holistic_issues as _import_holistic_issues,
+    )
+
+    return _import_holistic_issues(
+        issues_data,
+        state,
+        lang_name,
+        project_root=project_root,
+        utc_now_fn=utc_now_fn,
+    )
 
 __all__ = [
     # dimensions
@@ -91,13 +137,13 @@ __all__ = [
     "prepare_holistic_review",
     "build_investigation_batches",
     # import
-    "import_review_findings",
-    "import_holistic_findings",
+    "import_review_issues",
+    "import_holistic_issues",
     # remediation
     "generate_remediation_plan",
     # integrity
     "is_subjective_review_open",
-    "is_holistic_subjective_finding",
+    "is_holistic_subjective_issue",
     "subjective_review_open_breakdown",
     "unassessed_subjective_dimensions",
 ]

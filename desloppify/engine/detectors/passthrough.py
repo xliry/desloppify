@@ -35,21 +35,7 @@ def classify_params(
     make_pattern: Callable[[str], str],
     occurrences_per_match: int = 2,
 ) -> tuple[list[str], list[str]]:
-    """Classify params as passthrough vs direct-use.
-
-    For each param, count total word-boundary occurrences vs passthrough
-    pattern matches. If ALL occurrences are accounted for by passthrough
-    patterns, it's passthrough.
-
-    Args:
-        params: Parameter names to classify.
-        body: Function/component body text.
-        make_pattern: Returns a regex that matches passthrough usage of a param name.
-        occurrences_per_match: How many \\bname\\b occurrences each passthrough match accounts for.
-
-    Returns:
-        (passthrough_params, direct_params)
-    """
+    """Classify params as passthrough vs direct-use from body text matches."""
     passthrough = []
     direct = []
     for name in params:

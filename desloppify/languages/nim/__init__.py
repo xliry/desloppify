@@ -20,3 +20,8 @@ generic_lang(
     detect_markers=["*.nimble"],
     treesitter_spec=NIM_SPEC,
 )
+
+__all__ = [
+    "generic_lang",
+    "NIM_SPEC",
+]

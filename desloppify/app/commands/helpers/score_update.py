@@ -3,8 +3,17 @@
 from __future__ import annotations
 
 from desloppify import state as state_mod
-from desloppify.app.commands.scan.scan_helpers import format_delta
-from desloppify.core.output_api import colorize
+from desloppify.base.config import target_strict_score_from_config
+from desloppify.base import config as config_mod
+from desloppify.base.output.terminal import colorize
+
+
+def _format_delta(value: float, prev: float | None) -> tuple[str, str]:
+    """Return (delta_str, color) for a score change."""
+    delta = value - prev if prev is not None else 0
+    delta_str = f" ({'+' if delta > 0 else ''}{delta:.1f})" if delta != 0 else ""
+    color = "green" if delta > 0 else ("red" if delta < 0 else "dim")
+    return delta_str, color
 
 
 def print_score_update(
@@ -14,14 +23,7 @@ def print_score_update(
     config: dict | None = None,
     label: str = "Scores",
 ) -> None:
-    """Print score quartet with deltas and strict target progress.
-
-    Args:
-        state: Current state dict (scores already recomputed by save_state).
-        prev: ScoreSnapshot taken before the operation.
-        config: Project config dict (loaded from disk if not provided).
-        label: Prefix label (default "Scores").
-    """
+    """Print score quartet with deltas and strict target progress."""
     new = state_mod.score_snapshot(state)
     if (
         new.overall is None
@@ -32,10 +34,10 @@ def print_score_update(
         print(colorize(f"\n  {label} unavailable — run `desloppify scan`.", "yellow"))
         return
 
-    overall_s, overall_c = format_delta(new.overall, prev.overall)
-    objective_s, objective_c = format_delta(new.objective, prev.objective)
-    strict_s, strict_c = format_delta(new.strict, prev.strict)
-    verified_s, verified_c = format_delta(new.verified, prev.verified)
+    overall_s, overall_c = _format_delta(new.overall, prev.overall)
+    objective_s, objective_c = _format_delta(new.objective, prev.objective)
+    strict_s, strict_c = _format_delta(new.strict, prev.strict)
+    verified_s, verified_c = _format_delta(new.verified, prev.verified)
 
     print(
         f"\n  {label}: "
@@ -45,18 +47,23 @@ def print_score_update(
         + colorize(f"  verified {new.verified:.1f}/100{verified_s}", verified_c)
     )
 
+    # Score-drop reassurance after structural fixes
+    if new.strict is not None and prev.strict is not None and new.strict < prev.strict:
+        print(colorize(
+            "  Score dropped — this is normal after structural fixes. "
+            "New issues may surface; keep working the queue.",
+            "yellow",
+        ))
+
     # Always show strict target + next-command nudge
     if config is None:
-        from desloppify.core import config as config_mod
-
         config = config_mod.load_config()
-    from desloppify.app.commands.helpers.score import target_strict_score_from_config
 
-    target = target_strict_score_from_config(config, fallback=95.0)
-    _print_strict_target_nudge(new.strict, target)
+    target = target_strict_score_from_config(config)
+    print_strict_target_nudge(new.strict, target)
 
 
-def _print_strict_target_nudge(
+def print_strict_target_nudge(
     strict: float, target: float, *, show_next: bool = True,
 ) -> None:
     """Print a one-liner with strict→target and optional next-command nudge."""
@@ -68,4 +75,4 @@ def _print_strict_target_nudge(
         print(colorize(f"  Strict {strict:.1f} — target {target:.1f} reached!", "green"))
 
 
-__all__ = ["print_score_update", "_print_strict_target_nudge"]
+__all__ = ["print_score_update", "print_strict_target_nudge"]

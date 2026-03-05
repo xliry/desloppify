@@ -20,3 +20,8 @@ generic_lang(
     detect_markers=["rebar.config", "rebar.lock"],
     treesitter_spec=ERLANG_SPEC,
 )
+
+__all__ = [
+    "generic_lang",
+    "ERLANG_SPEC",
+]

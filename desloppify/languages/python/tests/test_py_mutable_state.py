@@ -90,8 +90,8 @@ class TestBasicDetection:
 
 
 class TestNotFlagged:
-    def test_upper_case_constant(self, tmp_path):
-        """UPPER_CASE names are constants — not flagged even if mutable."""
+    def test_upper_case_mutable_literal_is_flagged(self, tmp_path):
+        """UPPER_CASE mutable literals are still mutable global state."""
         path = _write_py(
             tmp_path,
             """\
@@ -99,6 +99,20 @@ class TestNotFlagged:
 
             def reset():
                 DEFAULT_LIST.clear()
+        """,
+        )
+        entries, _ = detect_global_mutable_config(path)
+        assert "DEFAULT_LIST" in _names(entries)
+
+    def test_upper_case_immutable_stays_exempt(self, tmp_path):
+        """UPPER_CASE immutable values remain treated as constants."""
+        path = _write_py(
+            tmp_path,
+            """\
+            DEFAULT_TIMEOUT = 30
+
+            def get_timeout():
+                return DEFAULT_TIMEOUT
         """,
         )
         entries, _ = detect_global_mutable_config(path)

@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 import re
 
-from desloppify.languages.python.detectors.smells_ast._shared import _iter_nodes
+from desloppify.languages.python.detectors.smells_ast._helpers import _iter_nodes
 from desloppify.languages.python.detectors.smells_ast._tree_safety_detectors_runtime import (
     _detect_import_time_boundary_mutations as _detect_import_time_boundary_mutations,
 )

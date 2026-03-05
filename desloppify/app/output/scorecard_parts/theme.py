@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib
 import logging
 
-from desloppify.core.fallbacks import log_best_effort_failure
+from desloppify.base.output.fallbacks import log_best_effort_failure
 
 # Render at 2x for retina/high-DPI crispness
 SCALE = 2

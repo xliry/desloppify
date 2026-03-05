@@ -6,10 +6,12 @@ import logging
 import re
 from pathlib import Path
 
-from desloppify.core._internal.text_utils import PROJECT_ROOT
-from desloppify.core.fallbacks import log_best_effort_failure
-from desloppify.core.discovery_api import find_ts_files, rel
-from desloppify.core.output_api import colorize, print_table
+from desloppify.base.discovery.file_paths import rel
+
+from desloppify.base.discovery.source import find_ts_files
+from desloppify.base.output.fallbacks import log_best_effort_failure
+from desloppify.base.output.terminal import colorize, print_table
+from desloppify.base.discovery.paths import get_project_root
 
 logger = logging.getLogger(__name__)
 
@@ -35,14 +37,14 @@ def detect_prop_interface_bloat(
             p = (
                 Path(filepath)
                 if Path(filepath).is_absolute()
-                else PROJECT_ROOT / filepath
+                else get_project_root() / filepath
             )
             content = p.read_text()
             for m in interface_re.finditer(content):
                 total_interfaces += 1
                 name = m.group(1)
                 start = m.end()
-                # Count properties by finding the closing brace
+                # Count properties by issue the closing brace
                 brace_depth = 1
                 pos = start
                 prop_count = 0

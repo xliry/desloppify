@@ -8,13 +8,22 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from desloppify.core._internal.text_utils import PROJECT_ROOT
+from desloppify.base.discovery.file_paths import resolve_path
+
+from desloppify.base.discovery.source import find_py_files
+from desloppify.base.discovery.paths import get_project_root
 from desloppify.engine.detectors.graph import finalize_graph
-from desloppify.core.discovery_api import find_py_files, resolve_path
+from desloppify.languages.python.detectors.deps_dynamic import (
+    find_python_dynamic_imports,
+)
+from desloppify.languages.python.detectors.deps_resolution import (
+    resolve_python_from_import as _resolve_python_from_import,
+)
+from desloppify.languages.python.detectors.deps_resolution import (
+    resolve_python_import as _resolve_python_import,
+)
 
 logger = logging.getLogger(__name__)
-
-LOGGER = logging.getLogger(__name__)
 
 def build_dep_graph(
     path: Path,
@@ -40,7 +49,7 @@ def build_dep_graph(
 
     for filepath in py_files:
         abs_path = (
-            filepath if Path(filepath).is_absolute() else str(PROJECT_ROOT / filepath)
+            filepath if Path(filepath).is_absolute() else str(get_project_root() / filepath)
         )
         try:
             content = Path(abs_path).read_text()
@@ -99,207 +108,4 @@ def build_dep_graph(
 
     return finalize_graph(dict(graph))
 
-
-def _resolve_python_from_import(
-    module_path: str, import_names: str, source_file: str, scan_root: Path
-) -> list[str]:
-    """Resolve a 'from X import Y' statement to file paths.
-
-    When module_path is dots-only (e.g. 'from . import X, Y'), each imported
-    name might be a submodule, so we resolve each name individually.
-    Otherwise, resolve the module_path as before.
-    """
-    source = (
-        Path(source_file)
-        if Path(source_file).is_absolute()
-        else PROJECT_ROOT / source_file
-    )
-    source_dir = source.parent
-    scan_root_path = Path(scan_root) if not isinstance(scan_root, Path) else scan_root
-
-    # Check if module_path is dots-only (no remainder after the dots)
-    dots_only = all(ch == "." for ch in module_path)
-
-    if dots_only:
-        # from . import X, Y  or  from .. import X, Y
-        # Each imported name could be a submodule in the base directory
-        dots = len(module_path)
-        base = source_dir
-        for _ in range(dots - 1):
-            base = base.parent
-
-        results = []
-        # Parse the import names (handle "X, Y" and "X as Z, Y as W")
-        names = [n.strip().split()[0] for n in import_names.split(",")]
-        for name in names:
-            if not name or name.startswith("(") or name.startswith("#"):
-                continue
-            name = name.strip("()")
-            if not name:
-                continue
-            # Try resolving as a submodule: base/name.py or base/name/__init__.py
-            target = _try_resolve_path(base / name)
-            if target:
-                results.append(target)
-
-        # Also resolve the package __init__.py itself (from . import X can pull from __init__)
-        if not results:
-            target = _try_resolve_path(base)
-            if target:
-                results.append(target)
-        return results
-    else:
-        # Normal case: from .foo import bar, from ..foo.bar import baz
-        results = []
-        target = _resolve_python_import(module_path, source_file, scan_root_path)
-
-        # Also try resolving each imported name as a submodule.
-        # e.g. ``from desloppify.engine._state import filtering`` should
-        # resolve to ``_state/filtering.py``, not just ``_state/__init__.py``.
-        if target and import_names:
-            names = [n.strip().split()[0] for n in import_names.split(",")]
-            for name in names:
-                name = name.strip("()")
-                if not name:
-                    continue
-                submod = _resolve_python_import(
-                    f"{module_path}.{name}", source_file, scan_root_path
-                )
-                if submod:
-                    results.append(submod)
-
-        if target:
-            results.append(target)
-        return results
-
-
-def _resolve_python_import(
-    module_path: str, source_file: str, scan_root: Path
-) -> str | None:
-    """Resolve a Python import to a file path.
-
-    Handles:
-      - Relative imports (starting with .)
-      - Absolute imports within the project
-    """
-    source = (
-        Path(source_file)
-        if Path(source_file).is_absolute()
-        else PROJECT_ROOT / source_file
-    )
-    source_dir = source.parent
-    scan_root_path = Path(scan_root) if not isinstance(scan_root, Path) else scan_root
-
-    if module_path.startswith("."):
-        return _resolve_relative_import(module_path, source_dir)
-    else:
-        return _resolve_absolute_import(module_path, scan_root_path)
-
-
-def _resolve_relative_import(module_path: str, source_dir: Path) -> str | None:
-    """Resolve a relative Python import (from . import X, from .foo import X)."""
-    # Count leading dots
-    dots = 0
-    for ch in module_path:
-        if ch == ".":
-            dots += 1
-        else:
-            break
-
-    remainder = module_path[dots:]
-
-    # Go up (dots - 1) directories from source_dir
-    base = source_dir
-    for _ in range(dots - 1):
-        base = base.parent
-
-    if remainder:
-        parts = remainder.split(".")
-        target_base = base
-        for part in parts:
-            target_base = target_base / part
-    else:
-        target_base = base
-
-    return _try_resolve_path(target_base)
-
-
-def _resolve_absolute_import(module_path: str, scan_root: Path) -> str | None:
-    """Resolve an absolute Python import within the project."""
-    parts = module_path.split(".")
-    # Try from scan root
-    target_base = scan_root.resolve()
-    for part in parts:
-        target_base = target_base / part
-
-    resolved = _try_resolve_path(target_base)
-    if resolved:
-        return resolved
-
-    # Try from project root
-    target_base = PROJECT_ROOT
-    for part in parts:
-        target_base = target_base / part
-
-    return _try_resolve_path(target_base)
-
-
-def find_python_dynamic_imports(path: Path, extensions: list[str]) -> set[str]:
-    """Find module specifiers referenced by importlib.import_module() calls.
-
-    Returns resolved file paths for string-literal arguments to
-    importlib.import_module(), enabling the orphaned detector to
-    recognize dynamically-loaded modules as live.
-    """
-    del extensions  # Python always uses .py
-    targets: set[str] = set()
-    for py_file in path.rglob("*.py"):
-        try:
-            tree = ast.parse(py_file.read_text(), filename=str(py_file))
-        except (SyntaxError, UnicodeDecodeError, OSError) as exc:
-            logger.debug("Skipping unreadable file %s in dynamic import scan: %s", py_file, exc)
-            continue
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            func = node.func
-            if (
-                isinstance(func, ast.Attribute)
-                and func.attr == "import_module"
-                and isinstance(func.value, ast.Name)
-                and func.value.id == "importlib"
-                and node.args
-                and isinstance(node.args[0], ast.Constant)
-                and isinstance(node.args[0].value, str)
-            ):
-                spec = node.args[0].value
-                # Resolve the module specifier to a file path
-                resolved = _resolve_absolute_import(spec, path)
-                if resolved:
-                    targets.add(resolved)
-                else:
-                    # Fall back to the raw specifier so _is_dynamically_imported
-                    # can still do substring matching
-                    targets.add(spec)
-    return targets
-
-
-def _try_resolve_path(target_base: Path) -> str | None:
-    """Try to resolve a module base path to an actual file."""
-    # foo.py
-    candidate = Path(str(target_base) + ".py")
-    if candidate.is_file():
-        return str(candidate.resolve())
-
-    # foo/__init__.py
-    candidate = target_base / "__init__.py"
-    if candidate.is_file():
-        return str(candidate.resolve())
-
-    # foo/ (directory with __init__.py)
-    if target_base.is_dir():
-        init = target_base / "__init__.py"
-        if init.is_file():
-            return str(init.resolve())
-
-    return None
+__all__ = ["build_dep_graph", "find_python_dynamic_imports"]

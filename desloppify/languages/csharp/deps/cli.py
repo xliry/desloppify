@@ -5,12 +5,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from desloppify.base.discovery.file_paths import rel
+from desloppify.base.output.terminal import colorize, print_table
 from desloppify.engine.detectors.graph import detect_cycles, get_coupling_score
-from desloppify.core.discovery_api import rel
-from desloppify.core.output_api import colorize, print_table
 
 
-def cmd_deps(args, *, build_dep_graph, resolve_roslyn_cmd) -> None:
+def render_deps_cli(args, *, build_dep_graph, resolve_roslyn_cmd) -> None:
     """Show dependency info for a specific C# file or top coupled files."""
     graph = build_dep_graph(Path(args.path), roslyn_cmd=resolve_roslyn_cmd(args))
 
@@ -54,7 +54,7 @@ def cmd_deps(args, *, build_dep_graph, resolve_roslyn_cmd) -> None:
         print_table(["File", "Importers", "Imports"], rows, [70, 9, 7])
 
 
-def cmd_cycles(args, *, build_dep_graph, resolve_roslyn_cmd) -> None:
+def render_cycles_cli(args, *, build_dep_graph, resolve_roslyn_cmd) -> None:
     """Show import cycles in C# source files."""
     graph = build_dep_graph(Path(args.path), roslyn_cmd=resolve_roslyn_cmd(args))
     cycles, _ = detect_cycles(graph)

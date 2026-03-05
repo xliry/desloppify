@@ -1,4 +1,4 @@
-"""Finding generation pipeline (phase execution and normalization)."""
+"""Issue generation pipeline (phase execution and normalization)."""
 
 from __future__ import annotations
 
@@ -6,15 +6,15 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from desloppify.core._internal.text_utils import PROJECT_ROOT
-from desloppify.engine.planning.common import is_subjective_phase
+from desloppify.base.discovery.file_paths import rel
+from desloppify.base.output.terminal import colorize
+from desloppify.base.discovery.paths import get_project_root
+from desloppify.engine.planning.helpers import is_subjective_phase
 from desloppify.engine.policy.zones import ZONE_POLICIES, FileZoneMap
-from desloppify.core.file_paths import rel
 from desloppify.languages import auto_detect_lang, available_langs, get_lang
 from desloppify.languages._framework.base.types import DetectorPhase, LangConfig
 from desloppify.languages._framework.runtime import LangRun, make_lang_run
-from desloppify.state import Finding
-from desloppify.core.output_api import colorize
+from desloppify.state import Issue
 
 
 @dataclass
@@ -80,69 +80,69 @@ def _select_phases(lang: LangRun, *, include_slow: bool, profile: str) -> list[D
     return phases
 
 
-def _run_phases(path: Path, lang: LangRun, phases: list[DetectorPhase]) -> tuple[list[Finding], dict[str, int]]:
-    findings: list[Finding] = []
+def _run_phases(path: Path, lang: LangRun, phases: list[DetectorPhase]) -> tuple[list[Issue], dict[str, int]]:
+    issues: list[Issue] = []
     all_potentials: dict[str, int] = {}
 
     total = len(phases)
     for idx, phase in enumerate(phases, start=1):
         _stderr(f"  [{idx}/{total}] {phase.label}...")
-        phase_findings, phase_potentials = phase.run(path, lang)
+        phase_issues, phase_potentials = phase.run(path, lang)
         all_potentials.update(phase_potentials)
-        findings.extend(phase_findings)
+        issues.extend(phase_issues)
 
-    return findings, all_potentials
+    return issues, all_potentials
 
 
-def _stamp_finding_context(findings: list[Finding], lang: LangRun) -> None:
-    if not findings:
+def _stamp_issue_context(issues: list[Issue], lang: LangRun) -> None:
+    if not issues:
         return
 
     zone_policies = None
     if lang.zone_map is not None:
         zone_policies = ZONE_POLICIES
 
-    for finding in findings:
-        finding["lang"] = lang.name
+    for issue in issues:
+        issue["lang"] = lang.name
         if lang.zone_map is None:
             continue
 
-        zone = lang.zone_map.get(finding.get("file", ""))
-        finding["zone"] = zone.value
+        zone = lang.zone_map.get(issue.get("file", ""))
+        issue["zone"] = zone.value
         policy = zone_policies.get(zone) if zone_policies else None
-        if policy and finding.get("detector") in policy.downgrade_detectors:
-            finding["confidence"] = "low"
+        if policy and issue.get("detector") in policy.downgrade_detectors:
+            issue["confidence"] = "low"
 
 
-def _generate_findings_from_lang(
+def _generate_issues_from_lang(
     path: Path,
     lang: LangRun,
     *,
     include_slow: bool = True,
     zone_overrides: dict[str, str] | None = None,
     profile: str = "full",
-) -> tuple[list[Finding], dict[str, int]]:
+) -> tuple[list[Issue], dict[str, int]]:
     """Run detector phases from a LangRun."""
     _build_zone_map(path, lang, zone_overrides)
     phases = _select_phases(lang, include_slow=include_slow, profile=profile)
-    findings, all_potentials = _run_phases(path, lang, phases)
-    _stamp_finding_context(findings, lang)
-    _stderr(f"\n  Total: {len(findings)} findings")
-    return findings, all_potentials
+    issues, all_potentials = _run_phases(path, lang, phases)
+    _stamp_issue_context(issues, lang)
+    _stderr(f"\n  Total: {len(issues)} issues")
+    return issues, all_potentials
 
 
-def generate_findings(
+def generate_issues(
     path: Path,
     lang: LangConfig | LangRun | None = None,
     *,
     options: PlanScanOptions | None = None,
-) -> tuple[list[Finding], dict[str, int]]:
-    """Run all detectors and convert results to normalized findings."""
+) -> tuple[list[Issue], dict[str, int]]:
+    """Run all detectors and convert results to normalized issues."""
     resolved_options = options or PlanScanOptions()
 
-    resolved_lang = _resolve_lang(lang, PROJECT_ROOT)
+    resolved_lang = _resolve_lang(lang, get_project_root())
     runtime_lang = make_lang_run(resolved_lang)
-    return _generate_findings_from_lang(
+    return _generate_issues_from_lang(
         path,
         runtime_lang,
         include_slow=resolved_options.include_slow,

@@ -232,17 +232,7 @@ def _build_duplicate_entries(
 
 
 def detect_duplicates(functions, threshold: float = 0.9) -> tuple[list[dict], int]:
-    """Find duplicate/near-duplicate functions, clustered by similarity.
-
-    Args:
-        functions: list of FunctionInfo objects with .file, .name, .line, .loc,
-                   .normalized, .body_hash attrs.
-        threshold: similarity threshold for near-duplicates (default 0.9).
-
-    Returns:
-        (entries, total_functions) where each entry represents a cluster of
-        similar functions, not a single pair.
-    """
+    """Find duplicate or near-duplicate functions clustered by similarity."""
     if not functions:
         return [], 0
     debug, debug_every = _dupes_debug_settings()

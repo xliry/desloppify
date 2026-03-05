@@ -1,14 +1,14 @@
-"""Tests for desloppify.app.commands.status_cmd — display helpers."""
+"""Tests for desloppify.app.commands.status — display helpers."""
 
-from desloppify.app.commands.status_cmd import (
-    cmd_status,
+from desloppify.app.commands.status import cmd_status
+from desloppify.app.commands.status.render import (
     show_dimension_table,
     show_focus_suggestion,
-    show_ignore_summary,
     show_structural_areas,
     show_subjective_followup,
 )
-from desloppify.app.commands.status_parts.summary import (
+from desloppify.app.commands.status.render_io import show_ignore_summary
+from desloppify.app.commands.status.summary import (
     print_open_scope_breakdown,
     score_summary_lines,
 )
@@ -38,7 +38,7 @@ class TestStatusModuleSanity:
         assert out == ""
 
     def test_show_structural_areas_empty_state(self, capsys):
-        """show_structural_areas with no findings produces no output."""
+        """show_structural_areas with no issues produces no output."""
         show_structural_areas({})
         assert capsys.readouterr().out == ""
 
@@ -83,7 +83,7 @@ class TestStatusModuleSanity:
         print_open_scope_breakdown(
             {
                 "scan_path": "src",
-                "findings": {
+                "issues": {
                     "a": {"status": "open", "file": "src/a.py"},
                     "b": {"status": "open", "file": "scripts/b.py"},
                 },
@@ -103,7 +103,7 @@ class TestStatusModuleSanity:
 class TestShowStructuralAreas:
     """show_structural_areas groups T3/T4 debt by area."""
 
-    def _make_finding(self, fid, *, file, tier, status="open"):
+    def _make_issue(self, fid, *, file, tier, status="open"):
         return {
             "id": fid,
             "file": file,
@@ -115,11 +115,11 @@ class TestShowStructuralAreas:
         }
 
     def test_no_output_when_fewer_than_5_structural(self, capsys):
-        """Should produce no output when structural findings < 5."""
+        """Should produce no output when structural issues < 5."""
         state = {
-            "findings": {
-                "f1": self._make_finding("f1", file="src/a/foo.ts", tier=3),
-                "f2": self._make_finding("f2", file="src/b/bar.ts", tier=4),
+            "issues": {
+                "f1": self._make_issue("f1", file="src/a/foo.ts", tier=3),
+                "f2": self._make_issue("f2", file="src/b/bar.ts", tier=4),
             }
         }
         show_structural_areas(state)
@@ -128,8 +128,8 @@ class TestShowStructuralAreas:
     def test_no_output_when_single_area(self, capsys):
         """Needs at least 2 areas to be worth showing."""
         state = {
-            "findings": {
-                f"f{i}": self._make_finding(
+            "issues": {
+                f"f{i}": self._make_issue(
                     f"f{i}", file=f"src/area/{chr(97 + i)}.ts", tier=3
                 )
                 for i in range(6)
@@ -140,62 +140,62 @@ class TestShowStructuralAreas:
         assert capsys.readouterr().out == ""
 
     def test_output_when_multiple_areas(self, capsys):
-        """Shows structural debt when 5+ findings across 2+ areas."""
-        findings = {}
+        """Shows structural debt when 5+ issues across 2+ areas."""
+        issues = {}
         for i in range(3):
             fid = f"a{i}"
-            findings[fid] = self._make_finding(
+            issues[fid] = self._make_issue(
                 fid, file=f"src/alpha/{chr(97 + i)}.ts", tier=3
             )
         for i in range(3):
             fid = f"b{i}"
-            findings[fid] = self._make_finding(
+            issues[fid] = self._make_issue(
                 fid, file=f"src/beta/{chr(97 + i)}.ts", tier=4
             )
-        state = {"findings": findings}
+        state = {"issues": issues}
         show_structural_areas(state)
         out = capsys.readouterr().out
         assert "Structural Debt" in out
 
     def test_excludes_non_structural_tiers(self, capsys):
-        """T1 and T2 findings should not be counted."""
-        findings = {}
+        """T1 and T2 issues should not be counted."""
+        issues = {}
         for i in range(10):
             fid = f"f{i}"
-            findings[fid] = self._make_finding(fid, file=f"src/a/{i}.ts", tier=1)
-        state = {"findings": findings}
+            issues[fid] = self._make_issue(fid, file=f"src/a/{i}.ts", tier=1)
+        state = {"issues": issues}
         show_structural_areas(state)
         assert capsys.readouterr().out == ""
 
     def test_includes_wontfix_status(self, capsys):
-        """wontfix findings should be counted as structural debt."""
-        findings = {}
+        """wontfix issues should be counted as structural debt."""
+        issues = {}
         for i in range(3):
             fid = f"a{i}"
-            findings[fid] = self._make_finding(
+            issues[fid] = self._make_issue(
                 fid, file=f"src/alpha/{chr(97 + i)}.ts", tier=3, status="wontfix"
             )
         for i in range(3):
             fid = f"b{i}"
-            findings[fid] = self._make_finding(
+            issues[fid] = self._make_issue(
                 fid, file=f"src/beta/{chr(97 + i)}.ts", tier=4, status="open"
             )
-        state = {"findings": findings}
+        state = {"issues": issues}
         show_structural_areas(state)
         out = capsys.readouterr().out
         assert "Structural Debt" in out
 
     def test_handles_empty_file_path_without_crashing(self, capsys):
         """Empty file paths should bucket into unknown area instead of crashing."""
-        findings = {
-            "a0": self._make_finding("a0", file="", tier=3),
-            "a1": self._make_finding("a1", file="", tier=3),
-            "a2": self._make_finding("a2", file="", tier=3),
-            "b0": self._make_finding("b0", file="src/beta/a.ts", tier=4),
-            "b1": self._make_finding("b1", file="src/beta/b.ts", tier=4),
-            "b2": self._make_finding("b2", file="src/beta/c.ts", tier=4),
+        issues = {
+            "a0": self._make_issue("a0", file="", tier=3),
+            "a1": self._make_issue("a1", file="", tier=3),
+            "a2": self._make_issue("a2", file="", tier=3),
+            "b0": self._make_issue("b0", file="src/beta/a.ts", tier=4),
+            "b1": self._make_issue("b1", file="src/beta/b.ts", tier=4),
+            "b2": self._make_issue("b2", file="src/beta/c.ts", tier=4),
         }
-        state = {"findings": findings}
+        state = {"issues": issues}
         show_structural_areas(state)
         out = capsys.readouterr().out
         assert "Structural Debt" in out
@@ -208,33 +208,33 @@ class TestShowIgnoreSummary:
             ["smells::*", "logs::*"],
             {
                 "last_ignored": 12,
-                "last_raw_findings": 40,
+                "last_raw_issues": 40,
                 "last_suppressed_pct": 30.0,
                 "recent_scans": 3,
                 "recent_ignored": 20,
-                "recent_raw_findings": 100,
+                "recent_raw_issues": 100,
                 "recent_suppressed_pct": 20.0,
             },
         )
         out = capsys.readouterr().out
         assert "Ignore list (2)" in out
-        assert "12/40 findings hidden (30.0%)" in out
-        assert "Recent (3 scans): 20/100 findings hidden (20.0%)" in out
+        assert "12/40 issues hidden (30.0%)" in out
+        assert "Recent (3 scans): 20/100 issues hidden (20.0%)" in out
 
     def test_prints_zero_hidden_when_no_last_raw(self, capsys):
         show_ignore_summary(
             ["smells::*"],
             {
                 "last_ignored": 0,
-                "last_raw_findings": 0,
+                "last_raw_issues": 0,
                 "recent_scans": 1,
                 "recent_ignored": 0,
-                "recent_raw_findings": 0,
+                "recent_raw_issues": 0,
                 "recent_suppressed_pct": 0.0,
             },
         )
         out = capsys.readouterr().out
-        assert "Ignore suppression (last scan): 0 findings hidden" in out
+        assert "Ignore suppression (last scan): 0 issues hidden" in out
 
 
 class TestStatusSubjectiveFollowup:
@@ -253,14 +253,14 @@ class TestStatusSubjectiveFollowup:
                 "score": 0.0,
                 "strict": 0.0,
                 "tier": 4,
-                "issues": 0,
+                "failing": 0,
                 "detectors": {"subjective_assessment": {}},
             },
             "Logic clarity": {
                 "score": 0.0,
                 "strict": 0.0,
                 "tier": 4,
-                "issues": 0,
+                "failing": 0,
                 "detectors": {"subjective_assessment": {}},
             },
         }
@@ -270,6 +270,6 @@ class TestStatusSubjectiveFollowup:
         assert "were reset to 0.0 this scan" in out
         assert "Anti-gaming safeguard applied" in out
         assert (
-            "review --run-batches --runner codex --parallel --scan-after-import --dimensions"
+            "review --prepare --force-review-rerun --dimensions"
             in out
         )

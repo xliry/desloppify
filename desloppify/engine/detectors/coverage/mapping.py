@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import logging
 import os
-import re
-from collections import deque
 from pathlib import Path
 
-from desloppify.core._internal.text_utils import PROJECT_ROOT
-from desloppify.hook_registry import get_lang_hook
+from desloppify.base.discovery.paths import get_project_root
+from desloppify.engine.detectors.coverage.mapping_analysis import (
+    analyze_test_quality_core,
+    build_test_import_index_core,
+    get_test_files_for_prod_core,
+    transitive_coverage_core,
+)
 from desloppify.engine.detectors.test_coverage.io import read_coverage_file
+from desloppify.engine.hook_registry import get_lang_hook
 
 logger = logging.getLogger(__name__)
 
@@ -44,21 +48,10 @@ def _infer_lang_name(test_files: set[str], production_files: set[str]) -> str | 
     return None
 
 
-def _import_based_mapping(
-    graph: dict,
-    test_files: set[str],
-    production_files: set[str],
-    lang_name: str | None = None,
-) -> set[str]:
-    """Map test files to production files via import edges."""
-    lang_name = lang_name or _infer_lang_name(test_files, production_files)
-    mod = _load_lang_test_coverage_module(lang_name)
-
-    tested = set()
-
-    # Build module-name->path index for resolving test imports.
+def _build_prod_module_index(production_files: set[str]) -> dict[str, str]:
+    """Build a mapping from module basename/dotted-path to full file path."""
     prod_by_module: dict[str, str] = {}
-    root_str = str(PROJECT_ROOT) + os.sep
+    root_str = str(get_project_root()) + os.sep
     for pf in production_files:
         rel_pf = pf[len(root_str) :] if pf.startswith(root_str) else pf
         module_name = rel_pf.replace("/", ".").replace("\\", ".")
@@ -73,10 +66,21 @@ def _import_based_mapping(
         parts = module_name.split(".")
         if parts:
             prod_by_module[parts[-1]] = pf
+    return prod_by_module
 
+
+def _graph_tested_imports(
+    graph: dict,
+    test_files: set[str],
+    production_files: set[str],
+    prod_by_module: dict[str, str],
+    lang_name: str | None,
+) -> set[str]:
+    """Follow import graph edges from test files to find directly-tested production files."""
+    tested: set[str] = set()
     for tf in test_files:
         entry = graph.get(tf)
-        graph_mapped = set()
+        graph_mapped: set[str] = set()
         if entry is not None:
             for imp in entry.get("imports", set()):
                 if imp in production_files:
@@ -90,35 +94,88 @@ def _import_based_mapping(
             tested |= _parse_test_imports(
                 tf, production_files, prod_by_module, lang_name
             )
+    return tested
+
+
+def _expand_barrel_targets(
+    *,
+    tested: set[str],
+    barrel_basenames: set[str],
+    production_files: set[str],
+    lang_name: str | None,
+) -> set[str]:
+    """Expand barrel/index file imports to the actual modules they re-export."""
+    extra: set[str] = set()
+    barrel_files = [f for f in tested if os.path.basename(f) in barrel_basenames]
+    for bf in barrel_files:
+        extra |= _resolve_barrel_reexports(bf, production_files, lang_name)
+    return extra
+
+
+def _expand_facade_targets(
+    *,
+    tested: set[str],
+    graph: dict,
+    production_files: set[str],
+    has_logic,
+) -> set[str]:
+    """Expand facade imports to their underlying implementation files.
+
+    If a directly-tested file has no testable logic (pure re-export facade),
+    promote its imports to directly tested.  This prevents false
+    "transitive_only" issues for internal modules behind facades like
+    scoring.py -> _scoring/policy/core.py.
+    """
+    facade_targets: set[str] = set()
+    for f in list(tested):
+        entry = graph.get(f)
+        if entry is None:
+            continue
+        read_result = read_coverage_file(
+            f, context="coverage_import_mapping_facade_logic"
+        )
+        if not read_result.ok:
+            continue
+        content = read_result.content
+        if not has_logic(f, content):
+            for imp in entry.get("imports", set()):
+                if imp in production_files:
+                    facade_targets.add(imp)
+    return facade_targets
+
+
+def import_based_mapping(
+    graph: dict,
+    test_files: set[str],
+    production_files: set[str],
+    lang_name: str | None = None,
+) -> set[str]:
+    """Map test files to production files via import edges."""
+    lang_name = lang_name or _infer_lang_name(test_files, production_files)
+    mod = _load_lang_test_coverage_module(lang_name)
+
+    prod_by_module = _build_prod_module_index(production_files)
+    tested = _graph_tested_imports(
+        graph, test_files, production_files, prod_by_module, lang_name
+    )
 
     barrel_basenames = getattr(mod, "BARREL_BASENAMES", set())
     if barrel_basenames:
-        barrel_files = [f for f in tested if os.path.basename(f) in barrel_basenames]
-        for bf in barrel_files:
-            tested |= _resolve_barrel_reexports(bf, production_files, lang_name)
+        tested |= _expand_barrel_targets(
+            tested=tested,
+            barrel_basenames=barrel_basenames,
+            production_files=production_files,
+            lang_name=lang_name,
+        )
 
-    # Facade expansion: if a directly-tested file has no testable logic (pure
-    # re-export facade), promote its imports to directly tested.  This prevents
-    # false "transitive_only" findings for internal modules behind facades like
-    # scoring.py -> _scoring/policy/core.py.
     has_logic = getattr(mod, "has_testable_logic", None)
     if callable(has_logic):
-        facade_targets: set[str] = set()
-        for f in list(tested):
-            entry = graph.get(f)
-            if entry is None:
-                continue
-            read_result = read_coverage_file(
-                f, context="coverage_import_mapping_facade_logic"
-            )
-            if not read_result.ok:
-                continue
-            content = read_result.content
-            if not has_logic(f, content):
-                for imp in entry.get("imports", set()):
-                    if imp in production_files:
-                        facade_targets.add(imp)
-        tested |= facade_targets
+        tested |= _expand_facade_targets(
+            tested=tested,
+            graph=graph,
+            production_files=production_files,
+            has_logic=has_logic,
+        )
 
     return tested
 
@@ -206,7 +263,7 @@ def _map_test_to_source(
     return None
 
 
-def _naming_based_mapping(
+def naming_based_mapping(
     test_files: set[str],
     production_files: set[str],
     lang_name: str,
@@ -243,118 +300,30 @@ def _strip_test_markers(basename: str, lang_name: str) -> str | None:
     return None
 
 
-def _transitive_coverage(
+def transitive_coverage(
     directly_tested: set[str],
     graph: dict,
     production_files: set[str],
 ) -> set[str]:
     """BFS from directly-tested files through dep-graph imports."""
-    visited = set(directly_tested)
-    queue = deque(directly_tested)
-
-    while queue:
-        current = queue.popleft()
-        entry = graph.get(current)
-        if entry is None:
-            continue
-        for imp in entry.get("imports", set()):
-            if imp in production_files and imp not in visited:
-                visited.add(imp)
-                queue.append(imp)
-
-    return visited - directly_tested
+    return transitive_coverage_core(directly_tested, graph, production_files)
 
 
-def _analyze_test_quality(
+def analyze_test_quality(
     test_files: set[str],
     lang_name: str,
 ) -> dict[str, dict]:
     """Analyze test quality per file."""
-    mod = _load_lang_test_coverage_module(lang_name)
-    assert_pats = list(getattr(mod, "ASSERT_PATTERNS", []) or [])
-    mock_pats = list(getattr(mod, "MOCK_PATTERNS", []) or [])
-    snapshot_pats = list(getattr(mod, "SNAPSHOT_PATTERNS", []) or [])
-    test_func_re = getattr(mod, "TEST_FUNCTION_RE", re.compile(r"$^"))
-    strip_comments = getattr(mod, "strip_comments", None)
-    placeholder_classifier = getattr(mod, "is_placeholder_test", None)
-
-    if not hasattr(test_func_re, "findall"):
-        test_func_re = re.compile(r"$^")
-    if not callable(strip_comments):
-
-        def strip_comments(text: str) -> str:
-            return text
-    if not callable(placeholder_classifier):
-
-        def placeholder_classifier(
-            _content: str, *, assertions: int, test_functions: int
-        ) -> bool:
-            return False
-
-    quality_map: dict[str, dict] = {}
-
-    for tf in test_files:
-        read_result = read_coverage_file(tf, context="coverage_quality_analysis")
-        if not read_result.ok:
-            continue
-        content = read_result.content
-
-        stripped = strip_comments(content)
-        lines = stripped.splitlines()
-
-        assertions = sum(
-            1 for line in lines if any(pat.search(line) for pat in assert_pats)
-        )
-        mocks = sum(1 for line in lines if any(pat.search(line) for pat in mock_pats))
-        snapshots = sum(
-            1 for line in lines if any(pat.search(line) for pat in snapshot_pats)
-        )
-        test_functions = len(test_func_re.findall(stripped))
-        try:
-            is_placeholder = bool(
-                placeholder_classifier(
-                    stripped, assertions=assertions, test_functions=test_functions
-                )
-            )
-        except TypeError as exc:
-            logger.debug(
-                "Best-effort fallback failed while trying to classify placeholder "
-                "test quality for %s: %s",
-                tf,
-                exc,
-            )
-            is_placeholder = False
-
-        if test_functions == 0:
-            quality = "no_tests"
-        elif assertions == 0:
-            quality = "assertion_free"
-        elif is_placeholder:
-            quality = "placeholder_smoke"
-        elif mocks > assertions:
-            quality = "over_mocked"
-        elif snapshots > 0 and snapshots > assertions * 0.5:
-            quality = "snapshot_heavy"
-        elif test_functions > 0 and assertions / test_functions < 1:
-            quality = "smoke"
-        elif assertions / test_functions >= 3:
-            quality = "thorough"
-        else:
-            quality = "adequate"
-
-        quality_map[tf] = {
-            "assertions": assertions,
-            "mocks": mocks,
-            "test_functions": test_functions,
-            "snapshots": snapshots,
-            "placeholder": is_placeholder,
-            "quality": quality,
-        }
-
-    return quality_map
+    return analyze_test_quality_core(
+        test_files,
+        lang_name,
+        load_lang_module=_load_lang_test_coverage_module,
+        read_coverage_file_fn=read_coverage_file,
+        logger=logger,
+    )
 
 
-def _get_test_files_for_prod(
+def get_test_files_for_prod(
     prod_file: str,
     test_files: set[str],
     graph: dict,
@@ -362,55 +331,28 @@ def _get_test_files_for_prod(
     parsed_imports_by_test: dict[str, set[str]] | None = None,
 ) -> list[str]:
     """Find which test files exercise a given production file."""
-    parsed_imports_by_test = parsed_imports_by_test or {}
-    root_str = str(PROJECT_ROOT) + os.sep
-    rel_prod = prod_file[len(root_str):] if prod_file.startswith(root_str) else prod_file
-    module_name = rel_prod.replace("/", ".").replace("\\", ".")
-    if "." in module_name:
-        module_name = module_name.rsplit(".", 1)[0]
-    prod_by_module: dict[str, str] = {module_name: prod_file}
-    parts = module_name.split(".")
-    if parts:
-        prod_by_module[parts[-1]] = prod_file
-
-    result = []
-    for tf in test_files:
-        entry = graph.get(tf)
-        if entry and prod_file in entry.get("imports", set()):
-            result.append(tf)
-            continue
-        parsed = parsed_imports_by_test.get(tf)
-        if parsed is None:
-            parsed = _parse_test_imports(tf, {prod_file}, prod_by_module, lang_name)
-        if prod_file in parsed:
-            result.append(tf)
-            continue
-        if _map_test_to_source(tf, {prod_file}, lang_name) == prod_file:
-            result.append(tf)
-    return result
+    return get_test_files_for_prod_core(
+        prod_file,
+        test_files,
+        graph,
+        lang_name,
+        parsed_imports_by_test,
+        parse_test_imports_fn=_parse_test_imports,
+        map_test_to_source_fn=_map_test_to_source,
+        project_root=str(get_project_root()),
+    )
 
 
-def _build_test_import_index(
+def build_test_import_index(
     test_files: set[str],
     production_files: set[str],
     lang_name: str,
 ) -> dict[str, set[str]]:
     """Parse test import sources once, producing a test->production import index."""
-    root_str = str(PROJECT_ROOT) + os.sep
-    prod_by_module: dict[str, str] = {}
-    for pf in production_files:
-        rel_pf = pf[len(root_str):] if pf.startswith(root_str) else pf
-        module_name = rel_pf.replace("/", ".").replace("\\", ".")
-        if "." in module_name:
-            module_name = module_name.rsplit(".", 1)[0]
-        prod_by_module[module_name] = pf
-        if module_name.endswith(".__init__"):
-            prod_by_module[module_name[: -len(".__init__")]] = pf
-        parts = module_name.split(".")
-        if parts:
-            prod_by_module[parts[-1]] = pf
-
-    index: dict[str, set[str]] = {}
-    for tf in test_files:
-        index[tf] = _parse_test_imports(tf, production_files, prod_by_module, lang_name)
-    return index
+    return build_test_import_index_core(
+        test_files,
+        production_files,
+        lang_name,
+        parse_test_imports_fn=_parse_test_imports,
+        project_root=str(get_project_root()),
+    )

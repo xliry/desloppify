@@ -11,7 +11,7 @@ generic_lang(
             "label": "clj-kondo",
             "cmd": "clj-kondo --lint . --config '{:output {:format :json}}'",
             "fmt": "json",
-            "id": "clj_kondo_finding",
+            "id": "clj_kondo_issue",
             "tier": 2,
             "fix_cmd": None,
         },
@@ -20,3 +20,8 @@ generic_lang(
     detect_markers=["deps.edn", "project.clj"],
     treesitter_spec=CLOJURE_SPEC,
 )
+
+__all__ = [
+    "generic_lang",
+    "CLOJURE_SPEC",
+]

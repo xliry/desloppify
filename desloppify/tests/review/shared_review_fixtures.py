@@ -23,9 +23,9 @@ def empty_state():
 
 
 @pytest.fixture
-def state_with_findings():
+def state_with_issues():
     state = build_empty_state()
-    state["findings"] = {
+    state["issues"] = {
         "unused::src/foo.ts::bar": {
             "id": "unused::src/foo.ts::bar",
             "detector": "unused",
@@ -104,8 +104,8 @@ def mock_lang_with_zones(mock_lang):
 
 
 @pytest.fixture
-def sample_findings_data():
-    """Sample agent-produced review findings."""
+def sample_issues_data():
+    """Sample agent-produced review issues."""
     return [
         {
             "file": "src/foo.ts",
@@ -144,7 +144,7 @@ def sample_findings_data():
 
 
 def _as_review_payload(data):
-    return data if isinstance(data, dict) else {"findings": data}
+    return data if isinstance(data, dict) else {"issues": data}
 
 
 def select_files_for_review(lang, path, state, **kwargs):

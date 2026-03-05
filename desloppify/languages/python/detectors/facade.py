@@ -5,7 +5,11 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from desloppify.languages._framework.facade_common import detect_reexport_facades_common
+from desloppify.base.discovery.file_paths import count_lines
+from desloppify.languages._framework.facade_common import (
+    facade_tier_confidence,
+    detect_reexport_facades_common,
+)
 
 
 def is_py_facade(filepath: str) -> dict | None:
@@ -51,18 +55,15 @@ def is_py_facade(filepath: str) -> dict | None:
 
 def detect_reexport_facades(
     graph: dict,
-    *,
-    max_importers: int = 2,
 ) -> tuple[list[dict], int]:
     """Detect Python re-export facade files and directories."""
     entries, total_checked = detect_reexport_facades_common(
         graph,
         is_facade_fn=is_py_facade,
-        max_importers=max_importers,
     )
 
     facade_files = {e["file"] for e in entries}
-    _detect_facade_directories(graph, facade_files, entries, max_importers)
+    _detect_facade_directories(graph, facade_files, entries)
     return sorted(
         entries, key=lambda e: (e["kind"], e["importers"], -e["loc"])
     ), total_checked
@@ -72,7 +73,6 @@ def _detect_facade_directories(
     graph: dict,
     facade_files: set[str],
     entries: list[dict],
-    max_importers: int,
 ):
     """Detect Python package directories where all modules are facades."""
     by_dir: dict[str, list[str]] = {}
@@ -92,12 +92,8 @@ def _detect_facade_directories(
             continue
 
         dir_importers = graph[init_file].get("importer_count", 0)
-        if dir_importers > max_importers:
-            continue
-
-        total_loc = sum(
-            len(Path(f).read_text().splitlines()) for f in files if Path(f).exists()
-        )
+        tier, confidence = facade_tier_confidence(dir_importers)
+        total_loc = sum(count_lines(Path(f)) for f in files if Path(f).exists())
 
         entries.append(
             {
@@ -107,5 +103,7 @@ def _detect_facade_directories(
                 "imports_from": [],
                 "kind": "directory",
                 "file_count": len(files),
+                "tier": tier,
+                "confidence": confidence,
             }
         )

@@ -1,4 +1,8 @@
-"""Holistic investigation batch builders for review preparation."""
+"""Holistic investigation batch builders for review preparation.
+
+Each batch builder returns exactly ONE batch with exactly ONE dimension.
+This ensures one prompt per dimension after explosion (which becomes a no-op).
+"""
 
 from __future__ import annotations
 
@@ -14,13 +18,6 @@ _EXTENSIONLESS_FILENAMES = {
     "build",
     "workspace",
 }
-
-_GOVERNANCE_REFERENCE_FILES: tuple[str, ...] = (
-    "README.md",
-    "DEVELOPMENT_PHILOSOPHY.md",
-    "desloppify/README.md",
-    "pyproject.toml",
-)
 
 
 def _normalize_file_path(value: object) -> str | None:
@@ -60,19 +57,6 @@ def _collect_unique_files(
                     return out
     return out
 
-
-def _existing_repo_files(
-    repo_root: Path | None,
-    candidates: tuple[str, ...],
-) -> list[str]:
-    """Return repository-relative paths for candidate files that exist."""
-    if repo_root is None:
-        return []
-    out: list[str] = []
-    for candidate in candidates:
-        if (repo_root / candidate).is_file():
-            out.append(candidate)
-    return out
 
 
 def _collect_files_from_batches(
@@ -134,9 +118,13 @@ def _representative_files_for_directory(
     return out
 
 
-def _batch_arch_coupling(ctx: HolisticContext, *, max_files: int | None = None) -> dict:
-    """Batch 1: Architecture & Coupling - god modules, import-time side effects."""
-    files = _collect_unique_files(
+# ---------------------------------------------------------------------------
+# Seed file collectors — shared across dimension batches
+# ---------------------------------------------------------------------------
+
+def _arch_coupling_files(ctx: HolisticContext, *, max_files: int | None = None) -> list[str]:
+    """Files relevant to architecture/coupling dimensions."""
+    return _collect_unique_files(
         [
             ctx.architecture.get("god_modules", []),
             ctx.coupling.get("module_level_io", []),
@@ -145,18 +133,10 @@ def _batch_arch_coupling(ctx: HolisticContext, *, max_files: int | None = None) 
         ],
         max_files=max_files,
     )
-    return {
-        "name": "Architecture & Coupling",
-        "dimensions": ["cross_module_architecture", "high_level_elegance"],
-        "files_to_read": files,
-        "why": "god modules, import-time side effects, boundary violations, deferred import pressure",
-    }
 
 
-def _batch_conventions_errors(
-    ctx: HolisticContext, *, max_files: int | None = None
-) -> dict:
-    """Batch 2: Conventions & Errors - sibling behavior outliers, mixed strategies."""
+def _conventions_files(ctx: HolisticContext, *, max_files: int | None = None) -> list[str]:
+    """Files relevant to conventions/errors dimensions."""
     sibling = ctx.conventions.get("sibling_behavior", {})
     outlier_files = [
         {"file": o["file"]} for di in sibling.values() for o in di.get("outliers", [])
@@ -186,22 +166,14 @@ def _batch_conventions_errors(
             for filepath in _representative_files_for_directory(ctx, directory):
                 naming_drift_files.append({"file": filepath})
 
-    files = _collect_unique_files(
+    return _collect_unique_files(
         [outlier_files, mixed_dir_files, exception_files, dupe_files, naming_drift_files],
         max_files=max_files,
     )
-    return {
-        "name": "Conventions & Errors",
-        "dimensions": ["convention_outlier", "error_consistency", "mid_level_elegance"],
-        "files_to_read": files,
-        "why": "naming drift, behavioral outliers, mixed error strategies, exception hotspots, duplicate clusters",
-    }
 
 
-def _batch_abstractions_deps(
-    ctx: HolisticContext, *, max_files: int | None = None
-) -> dict:
-    """Batch 3: Abstractions & Dependencies - abstraction hotspots, dep cycles."""
+def _abstractions_files(ctx: HolisticContext, *, max_files: int | None = None) -> list[str]:
+    """Files relevant to abstractions/dependencies dimensions."""
     util_files = ctx.abstractions.get("util_files", [])
     wrapper_files = [
         {"file": item.get("file", "")}
@@ -241,61 +213,36 @@ def _batch_abstractions_deps(
         for item in ctx.abstractions.get("typed_dict_violations", [])
         if isinstance(item, dict)
     ]
-
     complexity_files = [
         {"file": item.get("file", "")}
         for item in ctx.abstractions.get("complexity_hotspots", [])
         if isinstance(item, dict)
     ]
-
     cycle_files: list[dict] = []
     for summary in ctx.dependencies.get("cycle_summaries", []):
         for token in summary.split():
             if "/" in token and "." in token:
                 cycle_files.append({"file": token.strip(",'\"")})
-    files = _collect_unique_files(
+
+    return _collect_unique_files(
         [
-            util_files,
-            wrapper_files,
-            indirection_files,
-            param_bag_files,
-            interface_files,
-            delegation_files,
-            facade_files,
-            type_violation_files,
-            complexity_files,
-            cycle_files,
+            util_files, wrapper_files, indirection_files, param_bag_files,
+            interface_files, delegation_files, facade_files,
+            type_violation_files, complexity_files, cycle_files,
         ],
         max_files=max_files,
     )
-    return {
-        "name": "Abstractions & Dependencies",
-        "dimensions": [
-            "abstraction_fitness",
-            "dependency_health",
-            "mid_level_elegance",
-            "low_level_elegance",
-        ],
-        "files_to_read": files,
-        "why": "abstraction hotspots (wrappers/interfaces/param bags/delegation-heavy classes/facade modules/TypedDict violations), dep cycles",
-    }
 
 
-def _batch_testing_api(ctx: HolisticContext, *, max_files: int | None = None) -> dict:
-    """Batch 4: Testing & API - critical untested paths, sync/async mix."""
+def _testing_api_files(ctx: HolisticContext, *, max_files: int | None = None) -> list[str]:
+    """Files relevant to testing/API dimensions."""
     critical = ctx.testing.get("critical_untested", [])
     sync_async = [{"file": f} for f in ctx.api_surface.get("sync_async_mix", [])]
-    files = _collect_unique_files([critical, sync_async], max_files=max_files)
-    return {
-        "name": "Testing & API",
-        "dimensions": ["test_strategy", "api_surface_coherence", "mid_level_elegance"],
-        "files_to_read": files,
-        "why": "critical untested paths, API inconsistency",
-    }
+    return _collect_unique_files([critical, sync_async], max_files=max_files)
 
 
-def _batch_authorization(ctx: HolisticContext, *, max_files: int | None = None) -> dict:
-    """Batch 5: Authorization - auth gaps, service role usage."""
+def _authorization_files(ctx: HolisticContext, *, max_files: int | None = None) -> list[str]:
+    """Files relevant to authorization dimension."""
     auth_ctx = ctx.authorization
     auth_files: list[dict] = []
     for rpath, info in auth_ctx.get("route_auth_coverage", {}).items():
@@ -303,19 +250,18 @@ def _batch_authorization(ctx: HolisticContext, *, max_files: int | None = None) 
             auth_files.append({"file": rpath})
     for rpath in auth_ctx.get("service_role_usage", []):
         auth_files.append({"file": rpath})
-    files = _collect_unique_files([auth_files], max_files=max_files)
-    return {
-        "name": "Authorization",
-        "dimensions": ["authorization_consistency", "mid_level_elegance"],
-        "files_to_read": files,
-        "why": "auth gaps, service role usage, RLS coverage",
-    }
+    rls_coverage = auth_ctx.get("rls_coverage", {})
+    rls_files = rls_coverage.get("files", {})
+    if isinstance(rls_files, dict):
+        for _table, file_paths in rls_files.items():
+            if isinstance(file_paths, list):
+                for fpath in file_paths:
+                    auth_files.append({"file": fpath})
+    return _collect_unique_files([auth_files], max_files=max_files)
 
 
-def _batch_ai_debt_migrations(
-    ctx: HolisticContext, *, max_files: int | None = None
-) -> dict:
-    """Batch 6: AI Debt & Migrations - deprecated markers, migration TODOs."""
+def _ai_debt_files(ctx: HolisticContext, *, max_files: int | None = None) -> list[str]:
+    """Files relevant to AI debt/migration dimensions."""
     ai_debt = ctx.ai_debt_signals
     migration = ctx.migration_signals
     debt_files: list[dict] = []
@@ -327,27 +273,14 @@ def _batch_ai_debt_migrations(
             debt_files.append({"file": entry})
     for entry in migration.get("migration_todos", []):
         debt_files.append({"file": entry.get("file", "")})
-    files = _collect_unique_files([debt_files], max_files=max_files)
-    return {
-        "name": "AI Debt & Migrations",
-        "dimensions": [
-            "ai_generated_debt",
-            "incomplete_migration",
-            "low_level_elegance",
-        ],
-        "files_to_read": files,
-        "why": "AI-generated patterns, deprecated markers, migration TODOs",
-    }
+    return _collect_unique_files([debt_files], max_files=max_files)
 
 
-def _batch_package_organization(
-    ctx: HolisticContext, *, max_files: int | None = None
-) -> dict:
-    """Batch 7: Package Organization - file placement, directory boundaries."""
+def _package_org_files(ctx: HolisticContext, *, max_files: int | None = None) -> list[str]:
+    """Files relevant to package organization dimensions."""
     structure = ctx.structure
     struct_files: list[dict] = []
-    # Add flat_dir_findings directory representatives
-    for entry in structure.get("flat_dir_findings", []):
+    for entry in structure.get("flat_dir_issues", []):
         if isinstance(entry, dict):
             directory = entry.get("directory", "")
             for filepath in _representative_files_for_directory(ctx, directory):
@@ -378,17 +311,11 @@ def _batch_package_organization(
                         dir_path = d.rstrip("/")
                         rpath = f"{dir_path}/{fname}" if dir_path != "." else fname
                         struct_files.append({"file": rpath})
-    files = _collect_unique_files([struct_files], max_files=max_files)
-    return {
-        "name": "Package Organization",
-        "dimensions": ["package_organization", "high_level_elegance"],
-        "files_to_read": files,
-        "why": "file placement, directory boundaries, architectural layering",
-    }
+    return _collect_unique_files([struct_files], max_files=max_files)
 
 
-def _batch_state_design(ctx: HolisticContext, *, max_files: int | None = None) -> dict:
-    """Batch 8: State & Design Integrity - mutable globals, signal density hotspots."""
+def _state_design_files(ctx: HolisticContext, *, max_files: int | None = None) -> list[str]:
+    """Files relevant to state/design integrity dimensions."""
     evidence = ctx.scan_evidence
     mutable_files = [
         item for item in evidence.get("mutable_globals", [])
@@ -407,71 +334,50 @@ def _batch_state_design(ctx: HolisticContext, *, max_files: int | None = None) -
         for item in evidence.get("signal_density", [])[:10]
         if isinstance(item, dict) and item.get("file")
     ]
-    files = _collect_unique_files(
+    return _collect_unique_files(
         [mutable_files, complexity_files, error_files, density_files],
         max_files=max_files,
     )
-    return {
-        "name": "State & Design Integrity",
-        "dimensions": ["initialization_coupling", "design_coherence"],
-        "files_to_read": files,
-        "why": "mutable global state, concentrated quality signals, initialization coupling patterns",
-    }
 
 
-def _batch_governance_contracts(
-    ctx: HolisticContext,
-    *,
-    repo_root: Path | None,
-    max_files: int | None = None,
-) -> dict:
-    """Batch 8: Governance & Contracts - docs/policy promises vs runtime posture."""
-    docs = _existing_repo_files(repo_root, _GOVERNANCE_REFERENCE_FILES)
-    if not docs:
-        return {
-            "name": "Governance & Contracts",
-            "dimensions": [
-                "cross_module_architecture",
-                "high_level_elegance",
-                "test_strategy",
-                "package_organization",
-            ],
-            "files_to_read": [],
-            "why": "architecture contracts, compatibility policy, docs-vs-runtime scope, and quality-gate coverage",
-        }
-    top_imported = [
-        {"file": filepath}
-        for filepath in list(ctx.architecture.get("top_imported", {}).keys())[:5]
-        if isinstance(filepath, str)
-    ]
-    anchor_files = _collect_unique_files(
-        [
-            top_imported,
-            ctx.architecture.get("god_modules", []),
-            ctx.coupling.get("module_level_io", []),
-        ],
-        max_files=5,
-    )
-    seen = set(docs)
-    files = list(docs)
-    for filepath in anchor_files:
-        if filepath in seen:
-            continue
-        seen.add(filepath)
-        files.append(filepath)
-    if max_files is not None:
-        files = files[:max_files]
-    return {
-        "name": "Governance & Contracts",
-        "dimensions": [
-            "cross_module_architecture",
-            "high_level_elegance",
-            "test_strategy",
-            "package_organization",
-        ],
-        "files_to_read": files,
-        "why": "architecture contracts, compatibility policy, docs-vs-runtime scope, and quality-gate coverage",
-    }
+# ---------------------------------------------------------------------------
+# Dimension → seed file mapping.  Each dimension appears EXACTLY ONCE.
+# ---------------------------------------------------------------------------
+
+_DIMENSION_FILE_MAPPING: dict[str, str] = {
+    # dimension_name → file collector function name suffix
+    "cross_module_architecture": "arch_coupling",
+    "high_level_elegance": "package_org",
+    "convention_outlier": "conventions",
+    "error_consistency": "conventions",
+    "naming_quality": "conventions",
+    "abstraction_fitness": "abstractions",
+    "dependency_health": "abstractions",
+    "low_level_elegance": "abstractions",
+    "mid_level_elegance": "package_org",
+    "test_strategy": "testing_api",
+    "api_surface_coherence": "testing_api",
+    "authorization_consistency": "authorization",
+    "ai_generated_debt": "ai_debt",
+    "incomplete_migration": "ai_debt",
+    "package_organization": "package_org",
+    "initialization_coupling": "state_design",
+    "design_coherence": "state_design",
+    "contract_coherence": "abstractions",
+    "logic_clarity": "abstractions",
+    "type_safety": "abstractions",
+}
+
+_FILE_COLLECTORS = {
+    "arch_coupling": _arch_coupling_files,
+    "conventions": _conventions_files,
+    "abstractions": _abstractions_files,
+    "testing_api": _testing_api_files,
+    "authorization": _authorization_files,
+    "ai_debt": _ai_debt_files,
+    "package_org": _package_org_files,
+    "state_design": _state_design_files,
+}
 
 
 def _ensure_holistic_context(holistic_ctx: HolisticContext | dict) -> HolisticContext:
@@ -487,25 +393,36 @@ def build_investigation_batches(
     repo_root: Path | None = None,
     max_files_per_batch: int | None = None,
 ) -> list[dict]:
-    """Derive parallelizable investigation batches from holistic context."""
+    """Build one batch per dimension from holistic context.
+
+    Each batch has exactly one dimension and its relevant seed files.
+    """
     ctx = _ensure_holistic_context(holistic_ctx)
     del lang  # Reserved for future language-specific batch shaping.
-    batches = [
-        _batch_arch_coupling(ctx, max_files=max_files_per_batch),
-        _batch_conventions_errors(ctx, max_files=max_files_per_batch),
-        _batch_abstractions_deps(ctx, max_files=max_files_per_batch),
-        _batch_testing_api(ctx, max_files=max_files_per_batch),
-        _batch_authorization(ctx, max_files=max_files_per_batch),
-        _batch_ai_debt_migrations(ctx, max_files=max_files_per_batch),
-        _batch_package_organization(ctx, max_files=max_files_per_batch),
-        _batch_state_design(ctx, max_files=max_files_per_batch),
-        _batch_governance_contracts(
-            ctx,
-            repo_root=repo_root,
-            max_files=max_files_per_batch,
-        ),
-    ]
-    return [batch for batch in batches if batch["files_to_read"]]
+
+    # Cache file collector results so we don't recompute for shared collectors
+    file_cache: dict[str, list[str]] = {}
+    batches: list[dict] = []
+
+    for dimension, collector_key in _DIMENSION_FILE_MAPPING.items():
+        if collector_key not in file_cache:
+            collector = _FILE_COLLECTORS[collector_key]
+            file_cache[collector_key] = collector(
+                ctx, max_files=max_files_per_batch
+            )
+
+        files = file_cache[collector_key]
+        if not files:
+            continue
+
+        batches.append({
+            "name": dimension,
+            "dimensions": [dimension],
+            "files_to_read": files,
+            "why": f"seed files for {dimension} review",
+        })
+
+    return batches
 
 
 def filter_batches_to_dimensions(
@@ -514,10 +431,10 @@ def filter_batches_to_dimensions(
     *,
     fallback_max_files: int | None = 80,
 ) -> list[dict]:
-    """Keep only dimensions explicitly active for this holistic review run.
+    """Keep only batches whose dimension is in the active set.
 
-    If selected dimensions are not represented by any batch mapping, append a
-    fallback batch over representative files so scoped runs still get guidance.
+    For dimensions not covered by any batch, create a single-dimension
+    fallback batch using representative files from other batches.
     """
     selected = [d for d in dimensions if isinstance(d, str) and d]
     if not selected:
@@ -536,8 +453,6 @@ def filter_batches_to_dimensions(
     if not missing:
         return filtered
 
-    # Keep fallback batches tractable; giant sweeps are expensive and often
-    # unnecessary when dimensions are already explicitly scoped.
     max_files = fallback_max_files if isinstance(fallback_max_files, int) else None
     if isinstance(max_files, int) and max_files <= 0:
         max_files = None
@@ -545,14 +460,14 @@ def filter_batches_to_dimensions(
     if not fallback_files:
         return filtered
 
-    filtered.append(
-        {
-            "name": "Cross-cutting Sweep",
-            "dimensions": missing,
+    # One fallback batch per missing dimension (not one batch with all missing)
+    for dim in missing:
+        filtered.append({
+            "name": dim,
+            "dimensions": [dim],
             "files_to_read": fallback_files,
-            "why": "selected dimensions had no direct batch mapping; review representative cross-cutting files",
-        }
-    )
+            "why": f"no direct batch mapping for {dim}; using representative files",
+        })
     return filtered
 
 
@@ -564,32 +479,17 @@ def batch_concerns(
 ) -> dict | None:
     """Build investigation batch from mechanical concern signals.
 
-    *concerns* should be a list of Concern dataclass instances from
-    ``desloppify.engine.concerns``.
+    Returns a single batch with dimension ``design_coherence``.
+    Concern signals are attached as extra context for the reviewer.
     """
     if not concerns:
         return None
-    default_dims = ["design_coherence", "initialization_coupling"]
-    selected_dims = [
-        dim for dim in (active_dimensions or [])
-        if isinstance(dim, str) and dim
-    ]
-    selected_set = set(selected_dims)
-    overlap_dims = [dim for dim in default_dims if dim in selected_set]
-    concern_dims = overlap_dims or list(default_dims)
-    mapped_to_active_dims = bool(selected_dims) and not overlap_dims
-    if mapped_to_active_dims:
-        # Prevent concern signals from being silently dropped by scoped runs.
-        concern_dims = list(selected_dims)
 
     types = sorted({c.type for c in concerns if c.type})
     why_parts = ["mechanical detectors identified structural patterns needing judgment"]
     if types:
         why_parts.append(f"concern types: {', '.join(types)}")
-    if mapped_to_active_dims:
-        why_parts.append(
-            "mapped to active dimensions because design_coherence/initialization_coupling are not selected"
-        )
+
     files: list[str] = []
     seen: set[str] = set()
     concern_signals: list[dict[str, object]] = []
@@ -632,14 +532,13 @@ def batch_concerns(
         )
 
     return {
-        "name": "Design coherence — Mechanical Concern Signals",
-        "dimensions": concern_dims,
+        "name": "design_coherence",
+        "dimensions": ["design_coherence"],
         "files_to_read": files,
         "why": "; ".join(why_parts),
         "total_candidate_files": total_candidate_files,
         "concern_signals": concern_signals[:12],
         "concern_signal_count": len(concern_signals),
-        "mapped_to_active_dimensions": mapped_to_active_dims,
     }
 
 

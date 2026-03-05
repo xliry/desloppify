@@ -5,19 +5,11 @@ import re
 import subprocess
 from pathlib import Path
 
-from desloppify.core._internal.text_utils import PROJECT_ROOT
-from desloppify.core.discovery_api import (
-    collect_exclude_dirs as _collect_exclude_dirs,
-)
-from desloppify.core.discovery_api import (
-    find_py_files,
-)
-from desloppify.core.discovery_api import (
-    get_exclusions as _get_exclusions,
-)
-from desloppify.core.discovery_api import (
-    matches_exclusion as _matches_exclusion,
-)
+from desloppify.base.discovery.source import collect_exclude_dirs as _collect_exclude_dirs
+from desloppify.base.discovery.source import find_py_files
+from desloppify.base.discovery.source import get_exclusions as _get_exclusions
+from desloppify.base.discovery.file_paths import matches_exclusion as _matches_exclusion
+from desloppify.base.discovery.paths import get_project_root
 
 
 def _selected_codes(category: str) -> list[str]:
@@ -174,7 +166,7 @@ def _try_ruff(path: Path, category: str) -> list[dict] | None:
             cmd,
             capture_output=True,
             text=True,
-            cwd=PROJECT_ROOT,
+            cwd=get_project_root(),
             timeout=60,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -201,7 +193,7 @@ def _try_pyflakes(path: Path, category: str) -> list[dict] | None:
             ["pyflakes", str(path)],
             capture_output=True,
             text=True,
-            cwd=PROJECT_ROOT,
+            cwd=get_project_root(),
             timeout=60,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):

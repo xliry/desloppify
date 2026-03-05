@@ -8,6 +8,9 @@ import re
 from collections import defaultdict
 from pathlib import Path
 
+from desloppify.base.discovery.file_paths import rel
+from desloppify.base.output.terminal import log
+from desloppify.base.discovery.paths import get_src_path
 from desloppify.engine.detectors import complexity as complexity_detector_mod
 from desloppify.engine.detectors import coupling as coupling_detector_mod
 from desloppify.engine.detectors import flat_dirs as flat_dirs_detector_mod
@@ -16,24 +19,22 @@ from desloppify.engine.detectors import graph as graph_detector_mod
 from desloppify.engine.detectors import large as large_detector_mod
 from desloppify.engine.detectors import naming as naming_detector_mod
 from desloppify.engine.detectors import orphaned as orphaned_detector_mod
-from desloppify.engine.detectors import signature as signature_detector_mod
 from desloppify.engine.detectors import single_use as single_use_detector_mod
 from desloppify.engine.detectors.base import ComplexitySignal, GodRule
 from desloppify.engine.policy.zones import adjust_potential, filter_entries
-from desloppify.core.discovery_api import rel
 from desloppify.languages._framework.base.structural import (
     add_structural_signal,
     merge_structural_signals,
 )
-from desloppify.languages._framework.finding_factories import (
-    make_cycle_findings,
-    make_facade_findings,
-    make_orphaned_findings,
-    make_single_use_findings,
-    make_smell_findings,
-    make_unused_findings,
+from desloppify.languages._framework.issue_factories import (
+    make_cycle_issues,
+    make_facade_issues,
+    make_orphaned_issues,
+    make_single_use_issues,
+    make_smell_issues,
+    make_unused_issues,
 )
-from desloppify.languages._framework.runtime import LangRun
+from desloppify.languages._framework.base.types import LangRuntimeContract
 from desloppify.languages.typescript.detectors import concerns as concerns_detector_mod
 from desloppify.languages.typescript.detectors import (
     deprecated as deprecated_detector_mod,
@@ -51,9 +52,7 @@ from desloppify.languages.typescript.extractors_components import (
     detect_passthrough_components,
     extract_ts_components,
 )
-from desloppify.state import Finding, make_finding
-from desloppify.core.output_api import log
-from desloppify.core.paths_api import get_src_path
+from desloppify.state import Issue, make_issue
 
 # ── Helper computations for complexity signals ─────────────
 
@@ -135,7 +134,7 @@ TS_SKIP_DIRS = {"src/shared/components/ui"}
 # ── Phase runners ──────────────────────────────────────────
 
 
-def phase_logs(path: Path, lang: LangRun) -> tuple[list[Finding], dict[str, int]]:
+def phase_logs(path: Path, lang: LangRuntimeContract) -> tuple[list[Issue], dict[str, int]]:
     log_result = logs_detector_mod.detect_logs_result(path)
     log_entries = log_result.entries
     total_files = log_result.population_size
@@ -145,7 +144,7 @@ def phase_logs(path: Path, lang: LangRun) -> tuple[list[Finding], dict[str, int]
     results = []
     for (file, tag), entries in log_groups.items():
         results.append(
-            make_finding(
+            make_issue(
                 "logs",
                 file,
                 tag,
@@ -158,23 +157,23 @@ def phase_logs(path: Path, lang: LangRun) -> tuple[list[Finding], dict[str, int]
                 },
             )
         )
-    log(f"         {len(log_entries)} instances → {len(results)} findings")
+    log(f"         {len(log_entries)} instances → {len(results)} issues")
     return results, {"logs": adjust_potential(lang.zone_map, total_files)}
 
 
-def phase_unused(path: Path, lang: LangRun) -> tuple[list[Finding], dict[str, int]]:
+def phase_unused(path: Path, lang: LangRuntimeContract) -> tuple[list[Issue], dict[str, int]]:
     entries, total_files = unused_detector_mod.detect_unused(path)
-    return make_unused_findings(entries, log), {
+    return make_unused_issues(entries, log), {
         "unused": adjust_potential(lang.zone_map, total_files),
     }
 
 
-def phase_exports(path: Path, lang: LangRun) -> tuple[list[Finding], dict[str, int]]:
+def phase_exports(path: Path, lang: LangRuntimeContract) -> tuple[list[Issue], dict[str, int]]:
     export_entries, total_exports = exports_detector_mod.detect_dead_exports(path)
     results = []
     for e in export_entries:
         results.append(
-            make_finding(
+            make_issue(
                 "exports",
                 e["file"],
                 e["name"],
@@ -184,13 +183,13 @@ def phase_exports(path: Path, lang: LangRun) -> tuple[list[Finding], dict[str, i
                 detail={"line": e.get("line"), "kind": e.get("kind")},
             )
         )
-    log(f"         {len(export_entries)} instances → {len(results)} findings")
+    log(f"         {len(export_entries)} instances → {len(results)} issues")
     return results, {"exports": total_exports}
 
 
 def phase_deprecated(
-    path: Path, lang: LangRun
-) -> tuple[list[Finding], dict[str, int]]:
+    path: Path, lang: LangRuntimeContract
+) -> tuple[list[Issue], dict[str, int]]:
     dep_result = deprecated_detector_mod.detect_deprecated_result(path)
     dep_entries = dep_result.entries
     total_deprecated = dep_result.population_size
@@ -200,7 +199,7 @@ def phase_deprecated(
             continue
         tier = 1 if e["importers"] == 0 else 3
         results.append(
-            make_finding(
+            make_issue(
                 "deprecated",
                 e["file"],
                 e["symbol"],
@@ -212,14 +211,21 @@ def phase_deprecated(
             )
         )
     log(
-        f"         {len(dep_entries)} instances → {len(results)} findings (properties suppressed)"
+        f"         {len(dep_entries)} instances → {len(results)} issues (properties suppressed)"
     )
     return results, {"deprecated": total_deprecated}
 
 
-def phase_structural(
-    path: Path, lang: LangRun
-) -> tuple[list[Finding], dict[str, int]]:
+# ── phase_structural sub-functions ─────────────────────────
+
+
+def _detect_structural_signals(
+    path: Path, lang: LangRuntimeContract
+) -> tuple[list[Issue], int]:
+    """Detect large files, complexity, god components, and mixed concerns.
+
+    Returns (merged structural issues, file_count from large-file detection).
+    """
     structural: dict[str, dict] = {}
 
     large_entries, file_count = large_detector_mod.detect_large_files(
@@ -271,16 +277,22 @@ def phase_structural(
         )
 
     results = merge_structural_signals(structural, log)
+    return results, file_count
 
-    # Flat directories (too many files → missing sub-organization)
+
+def _detect_flat_dirs(path: Path, lang: LangRuntimeContract) -> tuple[list[Issue], int]:
+    """Detect flat directories with too many files or missing sub-organization."""
+    results: list[Issue] = []
     flat_entries, dir_count = flat_dirs_detector_mod.detect_flat_dirs(
-        path, file_finder=lang.file_finder
+        path,
+        file_finder=lang.file_finder,
+        config=flat_dirs_detector_mod.FlatDirDetectionConfig(),
     )
     for e in flat_entries:
         child_dir_count = int(e.get("child_dir_count", 0))
         combined_score = int(e.get("combined_score", e.get("file_count", 0)))
         results.append(
-            make_finding(
+            make_issue(
                 "flat_dirs",
                 e["directory"],
                 "",
@@ -307,8 +319,12 @@ def phase_structural(
             f"         flat dirs: {len(flat_entries)} overloaded directories "
             "(files/subdirs/combined)"
         )
+    return results, dir_count
 
-    # TS-specific: props bloat
+
+def _detect_props_bloat(path: Path, lang: LangRuntimeContract) -> tuple[list[Issue], int]:
+    """Detect bloated prop interfaces in TypeScript files."""
+    results: list[Issue] = []
     props_thresh = lang.props_threshold
     prop_entries, prop_count = props_detector_mod.detect_prop_interface_bloat(
         path, threshold=props_thresh
@@ -323,7 +339,7 @@ def phase_structural(
         else:
             conf, tier = "low", 3
         results.append(
-            make_finding(
+            make_issue(
                 "props",
                 e["file"],
                 e["interface"],
@@ -337,12 +353,16 @@ def phase_structural(
                 },
             )
         )
+    return results, prop_count
 
-    # TS-specific: passthrough components
+
+def _detect_passthrough(path: Path) -> list[Issue]:
+    """Detect passthrough components that forward most props unchanged."""
+    results: list[Issue] = []
     pt_entries = detect_passthrough_components(path)
     for e in pt_entries:
         results.append(
-            make_finding(
+            make_issue(
                 "props",
                 e["file"],
                 f"passthrough::{e['component']}",
@@ -360,23 +380,205 @@ def phase_structural(
                 },
             )
         )
+    return results
+
+
+def phase_structural(
+    path: Path, lang: LangRuntimeContract
+) -> tuple[list[Issue], dict[str, int]]:
+    structural_results, file_count = _detect_structural_signals(path, lang)
+    flat_results, dir_count = _detect_flat_dirs(path, lang)
+    props_results, prop_count = _detect_props_bloat(path, lang)
+    passthrough_results = _detect_passthrough(path)
+
+    results = structural_results + flat_results + props_results + passthrough_results
     potentials = {
         "structural": adjust_potential(lang.zone_map, file_count),
         "flat_dirs": dir_count,
-        "props": max(prop_count, len(pt_entries)) if prop_count else len(pt_entries),
+        "props": max(prop_count, len(passthrough_results)) if prop_count else len(passthrough_results),
     }
     return results, potentials
 
 
-def _make_boundary_findings(
+# ── phase_coupling sub-functions ───────────────────────────
+
+
+def _detect_single_use(
+    path: Path, graph: dict, lang: LangRuntimeContract
+) -> tuple[list[Issue], list[dict], int]:
+    """Detect single-use abstractions. Returns (issues, raw entries, candidate count)."""
+    single_entries, single_candidates = (
+        single_use_detector_mod.detect_single_use_abstractions(
+            path, graph, barrel_names=lang.barrel_names
+        )
+    )
+    single_entries = filter_entries(lang.zone_map, single_entries, "single_use")
+    issues = make_single_use_issues(
+        single_entries, lang.get_area, skip_dir_names={"commands"}, stderr_fn=log
+    )
+    return issues, single_entries, single_candidates
+
+
+def _detect_coupling_violations(
+    path: Path, graph: dict, lang: LangRuntimeContract, shared_prefix: str, tools_prefix: str
+) -> tuple[list[Issue], int]:
+    """Detect backwards coupling violations. Returns (issues, eligible_edges)."""
+    coupling_entries, coupling_edge_counts = coupling_detector_mod.detect_coupling_violations(
+        path, graph, shared_prefix=shared_prefix, tools_prefix=tools_prefix
+    )
+    coupling_entries = filter_entries(lang.zone_map, coupling_entries, "coupling")
+    results: list[Issue] = []
+    for e in coupling_entries:
+        results.append(
+            make_issue(
+                "coupling",
+                e["file"],
+                e["target"],
+                tier=2,
+                confidence="high",
+                summary=f"Backwards coupling: shared imports {e['target']} (tool: {e['tool']})",
+                detail={
+                    "target": e["target"],
+                    "tool": e["tool"],
+                    "direction": e["direction"],
+                },
+            )
+        )
+    return results, coupling_edge_counts.eligible_edges
+
+
+def _detect_cross_tool_imports(
+    path: Path, graph: dict, lang: LangRuntimeContract, tools_prefix: str
+) -> tuple[list[Issue], int]:
+    """Detect cross-tool import violations. Returns (issues, eligible_edges)."""
+    cross_tool, cross_edge_counts = coupling_detector_mod.detect_cross_tool_imports(
+        path, graph, tools_prefix=tools_prefix
+    )
+    cross_tool = filter_entries(lang.zone_map, cross_tool, "coupling")
+    results: list[Issue] = []
+    for e in cross_tool:
+        results.append(
+            make_issue(
+                "coupling",
+                e["file"],
+                e["target"],
+                tier=2,
+                confidence="high",
+                summary=f"Cross-tool import: {e['source_tool']}→{e['target_tool']} ({e['target']})",
+                detail={
+                    "target": e["target"],
+                    "source_tool": e["source_tool"],
+                    "target_tool": e["target_tool"],
+                    "direction": e["direction"],
+                },
+            )
+        )
+    if cross_tool:
+        log(f"         cross-tool: {len(cross_tool)} imports")
+    return results, cross_edge_counts.eligible_edges
+
+
+def _detect_cycles_and_orphans(
+    path: Path, graph: dict, lang: LangRuntimeContract
+) -> tuple[list[Issue], int]:
+    """Detect import cycles and orphaned files. Returns (issues, total_graph_files)."""
+    results: list[Issue] = []
+    cycle_entries, _ = graph_detector_mod.detect_cycles(graph)
+    cycle_entries = filter_entries(lang.zone_map, cycle_entries, "cycles", file_key="files")
+    results.extend(make_cycle_issues(cycle_entries, log))
+    orphan_entries, total_graph_files = orphaned_detector_mod.detect_orphaned_files(
+        path,
+        graph,
+        extensions=lang.extensions,
+        options=orphaned_detector_mod.OrphanedDetectionOptions(
+            extra_entry_patterns=lang.entry_patterns,
+            extra_barrel_names=lang.barrel_names,
+            dynamic_import_finder=deps_detector_mod.build_dynamic_import_targets,
+            alias_resolver=deps_detector_mod.ts_alias_resolver,
+        ),
+    )
+    orphan_entries = filter_entries(lang.zone_map, orphan_entries, "orphaned")
+    results.extend(make_orphaned_issues(orphan_entries, log))
+    return results, total_graph_files
+
+
+def _detect_facades(
+    graph: dict, lang: LangRuntimeContract
+) -> list[Issue]:
+    """Detect re-export facade files."""
+    facade_entries, _ = facade_detector_mod.detect_reexport_facades(graph)
+    facade_entries = filter_entries(lang.zone_map, facade_entries, "facade")
+    return make_facade_issues(facade_entries, log)
+
+
+def _detect_pattern_anomalies(path: Path) -> tuple[list[Issue], int]:
+    """Detect pattern consistency anomalies across areas. Returns (issues, total_areas)."""
+    pattern_result = patterns_detector_mod.detect_pattern_anomalies_result(path)
+    pattern_entries = pattern_result.entries
+    total_areas = pattern_result.population_size
+    results: list[Issue] = []
+    for e in pattern_entries:
+        results.append(
+            make_issue(
+                "patterns",
+                e["area"],
+                e["family"],
+                tier=3,
+                confidence=e.get("confidence", "low"),
+                summary=f"Competing patterns ({e['family']}): {e['review'][:120]}",
+                detail={
+                    "family": e["family"],
+                    "patterns_used": e["patterns_used"],
+                    "pattern_count": e["pattern_count"],
+                    "review": e["review"],
+                },
+            )
+        )
+    return results, total_areas
+
+
+def _detect_naming_inconsistencies(
+    path: Path, lang: LangRuntimeContract
+) -> tuple[list[Issue], int]:
+    """Detect naming convention inconsistencies within directories."""
+    naming_entries, total_dirs = naming_detector_mod.detect_naming_inconsistencies(
+        path,
+        file_finder=lang.file_finder,
+        skip_names=TS_SKIP_NAMES,
+        skip_dirs=TS_SKIP_DIRS,
+    )
+    results: list[Issue] = []
+    for e in naming_entries:
+        results.append(
+            make_issue(
+                "naming",
+                e["directory"],
+                e["minority"],
+                tier=3,
+                confidence="low",
+                summary=f"Naming inconsistency: {e['minority_count']} {e['minority']} files "
+                f"in {e['majority']}-majority dir ({e['total_files']} total)",
+                detail={
+                    "majority": e["majority"],
+                    "majority_count": e["majority_count"],
+                    "minority": e["minority"],
+                    "minority_count": e["minority_count"],
+                    "outliers": e["outliers"],
+                },
+            )
+        )
+    return results, total_dirs
+
+
+def _make_boundary_issues(
     single_entries: list[dict],
     path: Path,
     graph: dict,
-    lang: LangRun,
+    lang: LangRuntimeContract,
     shared_prefix: str,
     tools_prefix: str,
 ) -> tuple[list[dict], int]:
-    """Create boundary-candidate findings, deduplicated against single-use."""
+    """Create boundary-candidate issues, deduplicated against single-use."""
     single_use_emitted = set()
     for e in single_entries:
         is_size_ok = 50 <= e["loc"] <= 200
@@ -400,7 +602,7 @@ def _make_boundary_findings(
             deduped += 1
             continue
         results.append(
-            make_finding(
+            make_issue(
                 "coupling",
                 e["file"],
                 f"boundary::{e['sole_tool']}",
@@ -420,153 +622,54 @@ def _make_boundary_findings(
     return results, total_shared
 
 
-def phase_coupling(path: Path, lang: LangRun) -> tuple[list[Finding], dict[str, int]]:
+def phase_coupling(path: Path, lang: LangRuntimeContract) -> tuple[list[Issue], dict[str, int]]:
     results = []
     graph = deps_detector_mod.build_dep_graph(path)
     lang.dep_graph = graph
     zm = lang.zone_map
 
     # Single-use (shared helper)
-    single_entries, single_candidates = (
-        single_use_detector_mod.detect_single_use_abstractions(
-            path, graph, barrel_names=lang.barrel_names
-        )
-    )
-    single_entries = filter_entries(zm, single_entries, "single_use")
-    results.extend(
-        make_single_use_findings(
-            single_entries, lang.get_area, skip_dir_names={"commands"}, stderr_fn=log
-        )
-    )
+    single_use_issues, single_entries, single_candidates = _detect_single_use(path, graph, lang)
+    results.extend(single_use_issues)
+
     src_path = get_src_path()
     shared_prefix = f"{src_path}/shared/"
     tools_prefix = f"{src_path}/tools/"
-    coupling_entries, coupling_edge_counts = coupling_detector_mod.detect_coupling_violations(
-        path, graph, shared_prefix=shared_prefix, tools_prefix=tools_prefix
+
+    # Coupling violations
+    coupling_issues, coupling_edges = _detect_coupling_violations(
+        path, graph, lang, shared_prefix, tools_prefix
     )
-    coupling_entries = filter_entries(zm, coupling_entries, "coupling")
-    for e in coupling_entries:
-        results.append(
-            make_finding(
-                "coupling",
-                e["file"],
-                e["target"],
-                tier=2,
-                confidence="high",
-                summary=f"Backwards coupling: shared imports {e['target']} (tool: {e['tool']})",
-                detail={
-                    "target": e["target"],
-                    "tool": e["tool"],
-                    "direction": e["direction"],
-                },
-            )
-        )
+    results.extend(coupling_issues)
 
     # TS-specific: boundary candidates (deduplicated against single-use)
-    boundary_findings, _ = _make_boundary_findings(
+    boundary_issues, _ = _make_boundary_issues(
         single_entries, path, graph, lang, shared_prefix, tools_prefix
     )
-    results.extend(boundary_findings)
+    results.extend(boundary_issues)
 
     # TS-specific: cross-tool imports
-    cross_tool, cross_edge_counts = coupling_detector_mod.detect_cross_tool_imports(
-        path, graph, tools_prefix=tools_prefix
+    cross_tool_issues, cross_edges = _detect_cross_tool_imports(
+        path, graph, lang, tools_prefix
     )
-    cross_tool = filter_entries(zm, cross_tool, "coupling")
-    for e in cross_tool:
-        results.append(
-            make_finding(
-                "coupling",
-                e["file"],
-                e["target"],
-                tier=2,
-                confidence="high",
-                summary=f"Cross-tool import: {e['source_tool']}→{e['target_tool']} ({e['target']})",
-                detail={
-                    "target": e["target"],
-                    "source_tool": e["source_tool"],
-                    "target_tool": e["target_tool"],
-                    "direction": e["direction"],
-                },
-            )
-        )
-    if cross_tool:
-        log(f"         cross-tool: {len(cross_tool)} imports")
+    results.extend(cross_tool_issues)
 
     # Cycles + orphaned (shared helpers)
-    cycle_entries, _ = graph_detector_mod.detect_cycles(graph)
-    cycle_entries = filter_entries(zm, cycle_entries, "cycles", file_key="files")
-    results.extend(make_cycle_findings(cycle_entries, log))
-    orphan_entries, total_graph_files = orphaned_detector_mod.detect_orphaned_files(
-        path,
-        graph,
-        extensions=lang.extensions,
-        options=orphaned_detector_mod.OrphanedDetectionOptions(
-            extra_entry_patterns=lang.entry_patterns,
-            extra_barrel_names=lang.barrel_names,
-            dynamic_import_finder=deps_detector_mod.build_dynamic_import_targets,
-            alias_resolver=deps_detector_mod.ts_alias_resolver,
-        ),
-    )
-    orphan_entries = filter_entries(zm, orphan_entries, "orphaned")
-    results.extend(make_orphaned_findings(orphan_entries, log))
+    cycle_orphan_issues, total_graph_files = _detect_cycles_and_orphans(path, graph, lang)
+    results.extend(cycle_orphan_issues)
 
     # Re-export facades (shared detector)
-    facade_entries, _ = facade_detector_mod.detect_reexport_facades(graph)
-    facade_entries = filter_entries(zm, facade_entries, "facade")
-    results.extend(make_facade_findings(facade_entries, log))
+    results.extend(_detect_facades(graph, lang))
 
     # TS-specific: pattern consistency
-    pattern_result = patterns_detector_mod.detect_pattern_anomalies_result(path)
-    pattern_entries = pattern_result.entries
-    total_areas = pattern_result.population_size
-    for e in pattern_entries:
-        results.append(
-            make_finding(
-                "patterns",
-                e["area"],
-                e["family"],
-                tier=3,
-                confidence=e.get("confidence", "low"),
-                summary=f"Competing patterns ({e['family']}): {e['review'][:120]}",
-                detail={
-                    "family": e["family"],
-                    "patterns_used": e["patterns_used"],
-                    "pattern_count": e["pattern_count"],
-                    "review": e["review"],
-                },
-            )
-        )
+    pattern_issues, total_areas = _detect_pattern_anomalies(path)
+    results.extend(pattern_issues)
 
     # TS-specific: naming consistency
-    naming_entries, total_dirs = naming_detector_mod.detect_naming_inconsistencies(
-        path,
-        file_finder=lang.file_finder,
-        skip_names=TS_SKIP_NAMES,
-        skip_dirs=TS_SKIP_DIRS,
-    )
-    for e in naming_entries:
-        results.append(
-            make_finding(
-                "naming",
-                e["directory"],
-                e["minority"],
-                tier=3,
-                confidence="low",
-                summary=f"Naming inconsistency: {e['minority_count']} {e['minority']} files "
-                f"in {e['majority']}-majority dir ({e['total_files']} total)",
-                detail={
-                    "majority": e["majority"],
-                    "majority_count": e["majority_count"],
-                    "minority": e["minority"],
-                    "minority_count": e["minority_count"],
-                    "outliers": e["outliers"],
-                },
-            )
-        )
-    log(f"         → {len(results)} coupling/structural findings total")
-    coupling_edges = coupling_edge_counts.eligible_edges
-    cross_edges = cross_edge_counts.eligible_edges
+    naming_issues, total_dirs = _detect_naming_inconsistencies(path, lang)
+    results.extend(naming_issues)
+
+    log(f"         → {len(results)} coupling/structural issues total")
     potentials = {
         "single_use": adjust_potential(zm, single_candidates),
         "coupling": coupling_edges + cross_edges,
@@ -579,42 +682,16 @@ def phase_coupling(path: Path, lang: LangRun) -> tuple[list[Finding], dict[str, 
     return results, potentials
 
 
-def phase_smells(path: Path, lang: LangRun) -> tuple[list[Finding], dict[str, int]]:
+def phase_smells(path: Path, lang: LangRuntimeContract) -> tuple[list[Issue], dict[str, int]]:
     smell_entries, total_smell_files = smells_detector_mod.detect_smells(path)
-    results = make_smell_findings(smell_entries, log)
-
-    # Cross-file: signature variance
-    functions = lang.extract_functions(path) if lang.extract_functions else []
-    sig_entries, _ = signature_detector_mod.detect_signature_variance(functions)
-    for e in sig_entries:
-        results.append(
-            make_finding(
-                "smells",
-                e["files"][0],
-                f"sig_variance::{e['name']}",
-                tier=3,
-                confidence="medium",
-                summary=f"Signature variance: {e['name']}() has {e['signature_count']} "
-                f"different signatures across {e['file_count']} files",
-                detail={
-                    "function": e["name"],
-                    "file_count": e["file_count"],
-                    "signature_count": e["signature_count"],
-                    "variants": e["variants"][:5],
-                },
-            )
-        )
-    if sig_entries:
-        log(
-            f"         signature variance: {len(sig_entries)} functions with inconsistent signatures"
-        )
+    results = make_smell_issues(smell_entries, log)
 
     # TS-specific: React state sync anti-patterns
     react_entries, total_effects = react_detector_mod.detect_state_sync(path)
     for e in react_entries:
         setter_str = ", ".join(e["setters"])
         results.append(
-            make_finding(
+            make_issue(
                 "react",
                 e["file"],
                 setter_str,
@@ -632,7 +709,7 @@ def phase_smells(path: Path, lang: LangRun) -> tuple[list[Finding], dict[str, in
     for e in nesting_entries:
         providers_str = " → ".join(e["providers"][:5])
         results.append(
-            make_finding(
+            make_issue(
                 "react",
                 e["file"],
                 f"nesting::{e['depth']}",
@@ -649,7 +726,7 @@ def phase_smells(path: Path, lang: LangRun) -> tuple[list[Finding], dict[str, in
     hook_entries, _ = react_detector_mod.detect_hook_return_bloat(path)
     for e in hook_entries:
         results.append(
-            make_finding(
+            make_issue(
                 "react",
                 e["file"],
                 f"hook_bloat::{e['hook']}",
@@ -671,7 +748,7 @@ def phase_smells(path: Path, lang: LangRun) -> tuple[list[Finding], dict[str, in
     for e in bool_entries:
         states_str = ", ".join(e["states"][:5])
         results.append(
-            make_finding(
+            make_issue(
                 "react",
                 e["file"],
                 f"bool_state::{e['prefix']}",
@@ -693,13 +770,3 @@ def phase_smells(path: Path, lang: LangRun) -> tuple[list[Finding], dict[str, in
         "smells": adjust_potential(lang.zone_map, total_smell_files),
         "react": total_effects,
     }
-
-
-# Backward-compatible aliases for internal callers/tests.
-_phase_logs = phase_logs
-_phase_unused = phase_unused
-_phase_exports = phase_exports
-_phase_deprecated = phase_deprecated
-_phase_structural = phase_structural
-_phase_coupling = phase_coupling
-_phase_smells = phase_smells

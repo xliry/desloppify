@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from desloppify.core.output_api import colorize
+from desloppify.base.output.terminal import colorize
 
 
 class SubjectiveFollowup(Protocol):
@@ -17,14 +17,23 @@ class SubjectiveFollowup(Protocol):
     integrity_lines: list[tuple[str, str]]
 
 
-def print_subjective_followup(followup: SubjectiveFollowup, *, leading_newline: bool = False) -> bool:
+def print_subjective_followup(
+    followup: SubjectiveFollowup,
+    *,
+    leading_newline: bool = False,
+    objective_backlog: int = 0,
+) -> bool:
     """Render common subjective quality/integrity guidance lines.
+
+    When *objective_backlog* > 0, quality nudges are suppressed entirely — the
+    queue already surfaces subjective work when it becomes actionable.
+    Integrity warnings are always shown (anti-gaming safeguard).
 
     Returns True when any line is rendered.
     """
     printed = False
     prefix = "\n" if leading_newline else ""
-    if followup.low_assessed:
+    if followup.low_assessed and objective_backlog <= 0:
         print(
             colorize(
                 f"{prefix}  Subjective quality (<{followup.threshold_label}%): "

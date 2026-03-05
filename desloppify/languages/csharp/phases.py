@@ -5,16 +5,16 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from desloppify.base.discovery.file_paths import rel
+from desloppify.base.output.terminal import log
 from desloppify.engine.detectors.base import ComplexitySignal, GodRule
-from desloppify.core.discovery_api import rel
 from desloppify.languages._framework.base.shared_phases import (
     run_coupling_phase,
     run_structural_phase,
 )
-from desloppify.languages._framework.runtime import LangRuntimeContract
+from desloppify.languages._framework.base.types import LangRuntimeContract
 from desloppify.languages.csharp.detectors.deps import build_dep_graph
 from desloppify.languages.csharp.extractors import extract_csharp_classes
-from desloppify.core.output_api import log
 
 
 def _compute_max_nesting(content: str, _lines: list[str]):
@@ -138,23 +138,23 @@ def _corroboration_signals_for_csharp(
 
 
 def _apply_csharp_actionability_gates(
-    findings: list[dict], entries: list[dict], lang: LangRuntimeContract
+    issues: list[dict], entries: list[dict], lang: LangRuntimeContract
 ) -> None:
     """Downgrade actionability unless multiple independent signals corroborate."""
     min_signals = max(1, _runtime_setting(lang, "corroboration_min_signals", 2))
     entries_by_file = {rel(e["file"]): e for e in entries}
-    for finding in findings:
-        entry = entries_by_file.get(finding.get("file", ""))
+    for issue in issues:
+        entry = entries_by_file.get(issue.get("file", ""))
         if not entry:
             continue
         signals, complexity_score, import_count = _corroboration_signals_for_csharp(
             entry, lang
         )
         corroboration_count = len(signals)
-        finding["confidence"] = (
+        issue["confidence"] = (
             "medium" if corroboration_count >= min_signals else "low"
         )
-        detail = finding.setdefault("detail", {})
+        detail = issue.setdefault("detail", {})
         detail["corroboration_signals"] = signals
         detail["corroboration_count"] = corroboration_count
         detail["corroboration_min_required"] = min_signals
@@ -162,10 +162,10 @@ def _apply_csharp_actionability_gates(
         detail["import_count"] = import_count
 
 
-def _phase_structural(
+def phase_structural(
     path: Path, lang: LangRuntimeContract
 ) -> tuple[list[dict], dict[str, int]]:
-    """Merge large + complexity + god classes into structural findings."""
+    """Merge large + complexity + god classes into structural issues."""
     return run_structural_phase(
         path,
         lang,
@@ -176,7 +176,7 @@ def _phase_structural(
     )
 
 
-def _phase_coupling(
+def phase_coupling(
     path: Path, lang: LangRuntimeContract
 ) -> tuple[list[dict], dict[str, int]]:
     """Run coupling-oriented detectors on the C# dependency graph."""

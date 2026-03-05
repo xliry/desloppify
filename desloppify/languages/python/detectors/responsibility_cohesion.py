@@ -5,8 +5,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from desloppify.core._internal.text_utils import PROJECT_ROOT
-from desloppify.core.discovery_api import find_py_files
+from desloppify.base.discovery.source import find_py_files
+from desloppify.base.discovery.paths import get_project_root
 
 
 def _extract_top_level_functions(tree: ast.Module) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
@@ -89,7 +89,7 @@ def detect_responsibility_cohesion(
     candidates = 0
 
     for filepath in find_py_files(path):
-        full = Path(filepath) if Path(filepath).is_absolute() else PROJECT_ROOT / filepath
+        full = Path(filepath) if Path(filepath).is_absolute() else get_project_root() / filepath
         try:
             source = full.read_text()
             tree = ast.parse(source, filename=str(full))

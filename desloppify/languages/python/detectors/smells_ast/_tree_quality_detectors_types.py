@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ast
 
-from desloppify.languages.python.detectors.smells_ast._shared import _iter_nodes
+from desloppify.languages.python.detectors.smells_ast._helpers import _iter_nodes
 
 
 def _detect_optional_param_sprawl(

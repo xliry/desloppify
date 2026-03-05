@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-def parse_dimensions(args) -> set[str] | None:
+def parse_dimensions(args: object) -> set[str] | None:
     """Parse ``--dimensions`` from *args* into a set, or ``None`` if absent."""
     raw = getattr(args, "dimensions", None)
     if not isinstance(raw, str) or not raw.strip():

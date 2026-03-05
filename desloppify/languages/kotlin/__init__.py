@@ -21,3 +21,8 @@ generic_lang(
     detect_markers=["build.gradle.kts", "build.gradle"],
     treesitter_spec=KOTLIN_SPEC,
 )
+
+__all__ = [
+    "generic_lang",
+    "KOTLIN_SPEC",
+]

@@ -1,16 +1,18 @@
 """Preflight guards for subjective review reruns.
 
-Blocks --prepare / --run-batches / --external-start when the objective plan
-still has open items, unless --force-review-rerun is set.  Also auto-clears
-stale subjective markers before a new review cycle.
+Blocks reruns while backlog remains (objective issues and/or subjective queue
+work), unless ``--force-review-rerun`` is set. Also clears stale subjective
+markers before a new cycle.
 """
 
 from __future__ import annotations
 
+import re
 import sys
 
-from desloppify.core.output_api import colorize
-from desloppify.engine._work_queue.core import QueueBuildOptions, build_work_queue
+from desloppify.base.exception_sets import CommandError
+from desloppify.base.output.terminal import colorize
+from desloppify.engine._work_queue.context import queue_context
 from desloppify.state import StateModel, save_state
 
 from .helpers import parse_dimensions
@@ -51,9 +53,105 @@ def _scored_dimensions(state: StateModel) -> list[str]:
         if isinstance(assessment, dict):
             if assessment.get("score", 0):
                 scored.append(dim_key)
-        elif isinstance(assessment, (int, float)) and assessment:
+        elif isinstance(assessment, int | float) and assessment:
             scored.append(dim_key)
     return sorted(scored)
+
+
+def _normalize_dimension_key(raw: object) -> str:
+    """Normalize a dimension key/name to canonical snake_case."""
+    text = str(raw or "").strip().lower().replace(" ", "_")
+    return re.sub(r"[^a-z0-9_]+", "_", text).strip("_")
+
+
+
+def _blocking_scored_dimensions(
+    state: StateModel,
+    *,
+    dimensions: set[str] | None,
+    normalized_dimensions: set[str] | None,
+) -> list[str]:
+    scored_dims = _scored_dimensions(state)
+    if dimensions is None:
+        return scored_dims
+    normalized = normalized_dimensions or set()
+    return sorted(
+        dim
+        for dim in scored_dims
+        if _normalize_dimension_key(dim) in normalized
+    )
+
+
+def _objective_and_subjective_backlog(
+    state: StateModel,
+    *,
+    blocking_dims: list[str],
+) -> tuple[int, int]:
+    ctx = queue_context(state)
+    objective_total = ctx.policy.objective_count
+    # Subjective dimensions are resolved BY running reviews, so they never
+    # block review --prepare (that would be circular).  Only objective
+    # issues constitute genuine blocking backlog.
+    return objective_total, 0
+
+
+def _print_backlog_blocked_message(
+    *,
+    blocking_dims: list[str],
+    objective_total: int,
+    subjective_total: int,
+    dimensions: set[str] | None,
+) -> None:
+    print(
+        colorize(
+            "  Blocked: rerun requires drained backlog "
+            f"(objective: {objective_total}, subjective: {subjective_total}).",
+            "red",
+        ),
+        file=sys.stderr,
+    )
+    print(
+        colorize(
+            f"  Scored dimensions: {', '.join(blocking_dims)}",
+            "yellow",
+        ),
+        file=sys.stderr,
+    )
+    if objective_total > 0:
+        print(
+            colorize(
+                f"  Open objective issue(s): {objective_total}",
+                "yellow",
+            ),
+            file=sys.stderr,
+        )
+    if subjective_total > 0:
+        print(
+            colorize(
+                f"  Open subjective queue item(s): {subjective_total}",
+                "yellow",
+            ),
+            file=sys.stderr,
+        )
+    print("", file=sys.stderr)
+    if dimensions is not None:
+        unscored = sorted(dimensions - set(blocking_dims))
+        if unscored:
+            print(
+                colorize(
+                    f"  Tip: target only unscored dimensions with "
+                    f"--dimensions {','.join(unscored)}",
+                    "dim",
+                ),
+                file=sys.stderr,
+            )
+    print(
+        colorize(
+            "  Resolve open items first, or override with --force-review-rerun",
+            "dim",
+        ),
+        file=sys.stderr,
+    )
 
 
 def review_rerun_preflight(
@@ -65,75 +163,52 @@ def review_rerun_preflight(
 ) -> None:
     """Single entry point: gate check -> clear stale -> save.
 
-    Exits with code 1 when open objective items exist and
-    ``--force-review-rerun`` is not set.  On success, clears stale
-    subjective markers for the targeted dimensions and persists state.
+    Exits with code 1 when open backlog exists and ``--force-review-rerun`` is
+    not set. On success, clears stale subjective markers for targeted
+    dimensions and persists state.
     """
     dimensions = parse_dimensions(args)
+    normalized_dimensions = (
+        {_normalize_dimension_key(dim) for dim in dimensions}
+        if dimensions is not None
+        else None
+    )
 
     # --force-review-rerun bypasses the gate
     if getattr(args, "force_review_rerun", False):
         print(
             colorize(
-                "  --force-review-rerun: bypassing objective-plan-drained check.",
+                "  --force-review-rerun: bypassing rerun backlog checks.",
                 "yellow",
             )
         )
     else:
         # Only gate dimensions that are actually targeted by this review run.
-        scored_dims = _scored_dimensions(state)
-        if dimensions is not None:
-            blocking_dims = sorted(d for d in scored_dims if d in dimensions)
-        else:
-            blocking_dims = scored_dims
+        blocking_dims = _blocking_scored_dimensions(
+            state,
+            dimensions=dimensions,
+            normalized_dimensions=normalized_dimensions,
+        )
 
         # No gate when none of the targeted dimensions have prior scores —
         # this is a first run for these dimensions, not a rerun.
         if blocking_dims:
-            result = build_work_queue(
+            objective_total, subjective_total = _objective_and_subjective_backlog(
                 state,
-                options=QueueBuildOptions(
-                    status="open",
-                    include_subjective=False,
-                    count=None,
-                ),
+                blocking_dims=blocking_dims,
             )
-            total = result["total"]
-            if total > 0:
-                print(
-                    colorize(
-                        f"  Blocked: {total} open objective finding(s) — this is a review rerun.",
-                        "red",
-                    ),
-                    file=sys.stderr,
+            if objective_total > 0 or subjective_total > 0:
+                _print_backlog_blocked_message(
+                    blocking_dims=blocking_dims,
+                    objective_total=objective_total,
+                    subjective_total=subjective_total,
+                    dimensions=dimensions,
                 )
-                print(
-                    colorize(
-                        f"  Scored dimensions: {', '.join(blocking_dims)}",
-                        "yellow",
-                    ),
-                    file=sys.stderr,
+                raise CommandError(
+                    f"rerun blocked: open backlog (objective: {objective_total}, "
+                    f"subjective: {subjective_total})",
+                    exit_code=1,
                 )
-                print("", file=sys.stderr)
-                if dimensions is not None:
-                    unscored = sorted(dimensions - set(blocking_dims))
-                    if unscored:
-                        print(
-                            colorize(
-                                f"  Tip: target only unscored dimensions with "
-                                f"--dimensions {','.join(unscored)}",
-                                "dim",
-                            ),
-                            file=sys.stderr,
-                        )
-                print(
-                    colorize(
-                        "  Resolve open items first, or override with --force-review-rerun",
-                        "dim",
-                    ),
-                    file=sys.stderr,
-                )
-                sys.exit(1)
 
     # Gate passed — clear stale for targeted dims
     cleared = clear_stale_subjective_entries(state, dimensions=dimensions)

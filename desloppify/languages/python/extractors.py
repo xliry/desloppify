@@ -4,12 +4,12 @@ import hashlib
 import re
 from pathlib import Path
 
+from desloppify.base.discovery.source import find_py_files
 from desloppify.engine.detectors.base import FunctionInfo
 from desloppify.engine.detectors.passthrough import (
     classify_params,
     classify_passthrough_tier,
 )
-from desloppify.core.discovery_api import find_py_files
 from desloppify.languages.python.extractors_classes import extract_py_classes
 from desloppify.languages.python.extractors_shared import (
     extract_py_params,
@@ -27,15 +27,6 @@ def _find_signature_end(lines: list[str], start: int) -> int | None:
         if j > start and lt.strip().endswith(":"):
             return j
     return None
-
-
-def _extract_py_return_annotation(sig_text: str) -> str | None:
-    """Extract normalized return annotation from a Python signature."""
-    m = re.search(r"\)\s*->\s*(.*?)\s*:", sig_text, re.DOTALL)
-    if not m:
-        return None
-    annotation = " ".join(m.group(1).split())
-    return annotation or None
 
 
 def extract_py_functions(filepath: str) -> list[FunctionInfo]:

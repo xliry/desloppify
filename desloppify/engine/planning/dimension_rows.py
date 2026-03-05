@@ -1,12 +1,12 @@
 """Scorecard dimension row helpers for the engine/planning layer.
 
 Provides ``scorecard_dimension_rows`` without importing app-layer modules.
-The app scorecard surface re-exports this so external call-sites are unaffected.
+App-layer scorecard renderers import this to keep dependency direction clean.
 """
 
 from __future__ import annotations
 
-from desloppify.scoring import DIMENSIONS
+from desloppify.engine._scoring.policy.core import DIMENSIONS
 
 
 def scorecard_dimension_rows(
@@ -38,8 +38,8 @@ def scorecard_dimension_rows(
         rows = prepare_scorecard_dimensions(projected_state)
         if rows:
             return rows
-    except ImportError:
-        pass
+    except ImportError as exc:
+        _ = exc
 
     # Fallback for synthetic/unit-test states without full scorecard context.
     fallback_dim_scores = dim_scores or {}

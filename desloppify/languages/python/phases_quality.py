@@ -5,10 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from desloppify import state as state_mod
-from desloppify.engine.detectors import signature as signature_detector_mod
+from desloppify.base.output.terminal import log
 from desloppify.engine.policy.zones import adjust_potential, filter_entries
-from desloppify.languages._framework.finding_factories import make_smell_findings
-from desloppify.languages._framework.runtime import LangRun
+from desloppify.languages._framework.issue_factories import make_smell_issues
+from desloppify.languages._framework.base.types import LangRuntimeContract
 from desloppify.languages.python.detectors import dict_keys as dict_keys_detector_mod
 from desloppify.languages.python.detectors import (
     import_linter_adapter as import_linter_adapter_mod,
@@ -18,58 +18,30 @@ from desloppify.languages.python.detectors import (
 )
 from desloppify.languages.python.detectors import smells as smells_detector_mod
 from desloppify.languages.python.detectors.ruff_smells import detect_with_ruff_smells
-from desloppify.state import Finding
-from desloppify.core.output_api import log
+from desloppify.state import Issue
 
 
-def phase_smells(path: Path, lang: LangRun) -> tuple[list[Finding], dict[str, int]]:
+def phase_smells(path: Path, lang: LangRuntimeContract) -> tuple[list[Issue], dict[str, int]]:
     """Run file/code smell detectors plus cross-file signature variance."""
     entries, total_files = smells_detector_mod.detect_smells(path)
     # Supplement with ruff B/E/W rules not covered by the regex smells above.
     ruff_entries = detect_with_ruff_smells(path)
     if ruff_entries:
         entries = entries + ruff_entries
-    results = make_smell_findings(entries, log)
-
-    functions = lang.extract_functions(path) if lang.extract_functions else []
-    sig_entries, _ = signature_detector_mod.detect_signature_variance(functions)
-    for entry in sig_entries:
-        results.append(
-            state_mod.make_finding(
-                "smells",
-                entry["files"][0],
-                f"sig_variance::{entry['name']}",
-                tier=3,
-                confidence="medium",
-                summary=(
-                    f"Signature variance: {entry['name']}() has {entry['signature_count']} "
-                    f"different signatures across {entry['file_count']} files"
-                ),
-                detail={
-                    "function": entry["name"],
-                    "file_count": entry["file_count"],
-                    "signature_count": entry["signature_count"],
-                    "variants": entry["variants"][:5],
-                },
-            )
-        )
-    if sig_entries:
-        log(
-            f"         signature variance: {len(sig_entries)} functions with inconsistent signatures"
-        )
+    results = make_smell_issues(entries, log)
 
     return results, {
         "smells": adjust_potential(lang.zone_map, total_files),
     }
 
 
-def phase_mutable_state(path: Path, lang: LangRun) -> tuple[list[Finding], dict[str, int]]:
+def phase_mutable_state(path: Path, lang: LangRuntimeContract) -> tuple[list[Issue], dict[str, int]]:
     """Find global mutable config patterns."""
     entries, total_files = mutable_state_detector_mod.detect_global_mutable_config(path)
     results = []
     for entry in entries:
         results.append(
-            state_mod.make_finding(
+            state_mod.make_issue(
                 "global_mutable_config",
                 entry["file"],
                 entry["name"],
@@ -83,13 +55,13 @@ def phase_mutable_state(path: Path, lang: LangRun) -> tuple[list[Finding], dict[
             )
         )
     if results:
-        log(f"         global mutable config: {len(results)} findings")
+        log(f"         global mutable config: {len(results)} issues")
     return results, {
         "global_mutable_config": adjust_potential(lang.zone_map, total_files),
     }
 
 
-def phase_layer_violation(path: Path, lang: LangRun) -> tuple[list[Finding], dict[str, int]]:
+def phase_layer_violation(path: Path, lang: LangRuntimeContract) -> tuple[list[Issue], dict[str, int]]:
     """Find package/layer boundary violations via import-linter."""
     entries = import_linter_adapter_mod.detect_with_import_linter(path)
     if entries is None:
@@ -99,7 +71,7 @@ def phase_layer_violation(path: Path, lang: LangRun) -> tuple[list[Finding], dic
     results = []
     for entry in entries:
         results.append(
-            state_mod.make_finding(
+            state_mod.make_issue(
                 "layer_violation",
                 entry["file"],
                 f"{entry['source_pkg']}::{entry['target_pkg']}",
@@ -115,11 +87,11 @@ def phase_layer_violation(path: Path, lang: LangRun) -> tuple[list[Finding], dic
             )
         )
     if results:
-        log(f"         layer violations: {len(results)} findings")
+        log(f"         layer violations: {len(results)} issues")
     return results, {"layer_violation": total_files}
 
 
-def phase_dict_keys(path: Path, lang: LangRun) -> tuple[list[Finding], dict[str, int]]:
+def phase_dict_keys(path: Path, lang: LangRuntimeContract) -> tuple[list[Issue], dict[str, int]]:
     """Run dict-key flow and schema-drift analysis."""
     flow_entries, files_checked = dict_keys_detector_mod.detect_dict_key_flow(path)
     flow_entries = filter_entries(lang.zone_map, flow_entries, "dict_keys")
@@ -127,7 +99,7 @@ def phase_dict_keys(path: Path, lang: LangRun) -> tuple[list[Finding], dict[str,
     results = []
     for entry in flow_entries:
         results.append(
-            state_mod.make_finding(
+            state_mod.make_issue(
                 "dict_keys",
                 entry["file"],
                 f"{entry['kind']}::{entry['variable']}::{entry['key']}"
@@ -149,7 +121,7 @@ def phase_dict_keys(path: Path, lang: LangRun) -> tuple[list[Finding], dict[str,
     drift_entries = filter_entries(lang.zone_map, drift_entries, "dict_keys")
     for entry in drift_entries:
         results.append(
-            state_mod.make_finding(
+            state_mod.make_issue(
                 "dict_keys",
                 entry["file"],
                 f"schema_drift::{entry['key']}::{entry['line']}",
@@ -165,7 +137,7 @@ def phase_dict_keys(path: Path, lang: LangRun) -> tuple[list[Finding], dict[str,
             )
         )
 
-    log(f"         -> {len(results)} dict key findings")
+    log(f"         -> {len(results)} dict key issues")
     return results, {
         "dict_keys": adjust_potential(lang.zone_map, files_checked),
     }

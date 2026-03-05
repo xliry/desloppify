@@ -1,0 +1,96 @@
+"""Skip/unskip mutations for plan operations."""
+
+from __future__ import annotations
+
+from desloppify.engine._plan.operations_queue import _remove_id_from_lists
+from desloppify.engine._plan.promoted_ids import prune_promoted_ids
+from desloppify.engine._plan.schema import PlanModel, SkipEntry, ensure_plan_defaults
+from desloppify.engine._plan.skip_policy import skip_kind_needs_state_reopen
+from desloppify.engine._state.schema import utc_now
+
+
+def skip_items(
+    plan: PlanModel,
+    issue_ids: list[str],
+    *,
+    kind: str = "temporary",
+    reason: str | None = None,
+    note: str | None = None,
+    attestation: str | None = None,
+    review_after: int | None = None,
+    scan_count: int = 0,
+) -> int:
+    """Move issue IDs to the skipped dict. Returns count skipped."""
+    ensure_plan_defaults(plan)
+    now = utc_now()
+    count = 0
+    skipped: dict[str, SkipEntry] = plan["skipped"]
+    skip_set = set(issue_ids)
+    prune_promoted_ids(plan, skip_set)
+    for fid in issue_ids:
+        _remove_id_from_lists(plan, fid)
+        skipped[fid] = {
+            "issue_id": fid,
+            "kind": kind,
+            "reason": reason,
+            "note": note,
+            "attestation": attestation,
+            "created_at": now,
+            "review_after": review_after,
+            "skipped_at_scan": scan_count,
+        }
+        count += 1
+    return count
+
+
+def unskip_items(
+    plan: PlanModel, issue_ids: list[str]
+) -> tuple[int, list[str]]:
+    """Bring issue IDs back from skipped to the end of queue_order.
+
+    Returns ``(count_unskipped, permanent_ids_needing_state_reopen)``
+    where the second list contains IDs that were permanent or false_positive
+    and need their state-layer status reopened by the caller.
+    """
+    ensure_plan_defaults(plan)
+    count = 0
+    need_reopen: list[str] = []
+    skipped: dict[str, SkipEntry] = plan["skipped"]
+    for fid in issue_ids:
+        entry = skipped.pop(fid, None)
+        if entry is not None:
+            if skip_kind_needs_state_reopen(str(entry.get("kind", ""))):
+                need_reopen.append(fid)
+            if fid not in plan["queue_order"]:
+                plan["queue_order"].append(fid)
+            count += 1
+    return count, need_reopen
+
+
+def resurface_stale_skips(
+    plan: PlanModel, current_scan_count: int
+) -> list[str]:
+    """Move temporary skips past their review_after threshold back to queue.
+
+    Returns list of resurfaced issue IDs.
+    """
+    ensure_plan_defaults(plan)
+    skipped: dict[str, SkipEntry] = plan["skipped"]
+    resurfaced: list[str] = []
+    for fid in list(skipped):
+        entry = skipped[fid]
+        if entry.get("kind") != "temporary":
+            continue
+        review_after = entry.get("review_after")
+        if review_after is None:
+            continue
+        skipped_at = entry.get("skipped_at_scan", 0)
+        if current_scan_count >= skipped_at + review_after:
+            skipped.pop(fid)
+            if fid not in plan["queue_order"]:
+                plan["queue_order"].append(fid)
+            resurfaced.append(fid)
+    return resurfaced
+
+
+__all__ = ["resurface_stale_skips", "skip_items", "unskip_items"]

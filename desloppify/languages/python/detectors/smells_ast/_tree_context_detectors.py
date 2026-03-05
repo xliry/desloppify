@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ast
 
-from desloppify.languages.python.detectors.smells_ast._shared import (
+from desloppify.languages.python.detectors.smells_ast._helpers import (
     _iter_nodes,
     _looks_like_path_var,
 )

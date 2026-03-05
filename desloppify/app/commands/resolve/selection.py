@@ -8,11 +8,13 @@ import sys
 from dataclasses import dataclass
 
 from desloppify import state as state_mod
-from desloppify.engine.work_queue import ATTEST_EXAMPLE
-from desloppify.core.output_api import colorize
-
-_REQUIRED_ATTESTATION_PHRASES = ("i have actually", "not gaming")
-_ATTESTATION_KEYWORD_HINT = ("I have actually", "not gaming")
+from desloppify.app.commands.helpers.attestation import (
+    show_attestation_requirement,
+    validate_attestation,
+)
+from desloppify.base.exception_sets import CommandError
+from desloppify.base.output.terminal import colorize
+from desloppify.engine._work_queue.core import ATTEST_EXAMPLE
 
 
 def _emit_warning(message: str) -> None:
@@ -35,42 +37,11 @@ class ResolveQueryContext:
     state: dict
 
 
-def _missing_attestation_keywords(attestation: str | None) -> list[str]:
-    normalized = " ".join((attestation or "").strip().lower().split())
-    return [
-        phrase for phrase in _REQUIRED_ATTESTATION_PHRASES if phrase not in normalized
-    ]
-
-
-def validate_attestation(attestation: str | None) -> bool:
-    return not _missing_attestation_keywords(attestation)
-
-
-def show_attestation_requirement(
-    label: str,
-    attestation: str | None,
-    example: str,
-) -> None:
-    missing = _missing_attestation_keywords(attestation)
-    if not attestation:
-        _emit_warning(f"{label} requires --attest.")
-    elif missing:
-        missing_str = ", ".join(f"'{keyword}'" for keyword in missing)
-        _emit_warning(
-            f"{label} attestation is missing required keyword(s): {missing_str}."
-        )
-    _emit_warning(
-        f"Required keywords: '{_ATTESTATION_KEYWORD_HINT[0]}' and '{_ATTESTATION_KEYWORD_HINT[1]}'."
-    )
-    print(colorize(f'Example: --attest "{example}"', "dim"), file=sys.stderr)
-
-
 def _validate_resolve_inputs(args: argparse.Namespace, attestation: str | None) -> None:
     if args.status == "wontfix" and not args.note:
-        _emit_warning(
+        raise CommandError(
             "Wontfix items become technical debt. Add --note to record your reasoning for future review."
         )
-        sys.exit(1)
     if args.status == "open":
         return
     if not validate_attestation(attestation):
@@ -79,7 +50,7 @@ def _validate_resolve_inputs(args: argparse.Namespace, attestation: str | None) 
             attestation,
             ATTEST_EXAMPLE,
         )
-        sys.exit(1)
+        raise CommandError("Manual resolve requires a valid attestation.")
 
 
 def _previous_score_snapshot(state: dict) -> state_mod.ScoreSnapshot:
@@ -88,13 +59,13 @@ def _previous_score_snapshot(state: dict) -> state_mod.ScoreSnapshot:
 
 
 def _preview_resolve_count(state: dict, patterns: list[str]) -> int:
-    """Count unique open findings matching the provided patterns."""
+    """Count unique open issues matching the provided patterns."""
     matched_ids: set[str] = set()
     for pattern in patterns:
-        for finding in state_mod.match_findings(state, pattern, status_filter="open"):
-            finding_id = finding.get("id")
-            if finding_id:
-                matched_ids.add(finding_id)
+        for issue in state_mod.match_issues(state, pattern, status_filter="open"):
+            issue_id = issue.get("id")
+            if issue_id:
+                matched_ids.add(issue_id)
     return len(matched_ids)
 
 
@@ -106,13 +77,13 @@ def _estimate_wontfix_strict_delta(
     resolve_all_patterns_fn,
 ) -> float:
     """Estimate strict score drop if this resolve command is applied as wontfix."""
-    before = state_mod.get_strict_score(state)
+    before = state_mod.score_snapshot(state).strict
     if before is None:
         return 0.0
 
     preview_state = copy.deepcopy(state)
     resolve_all_patterns_fn(preview_state, args, attestation=attestation)
-    after = state_mod.get_strict_score(preview_state)
+    after = state_mod.score_snapshot(preview_state).strict
     if after is None:
         return 0.0
     return max(0.0, before - after)
@@ -140,10 +111,9 @@ def _enforce_batch_wontfix_confirmation(
         attestation=attestation,
         resolve_all_patterns_fn=resolve_all_patterns_fn,
     )
-    _emit_warning(f"Large wontfix batch detected ({preview_count} findings).")
+    _emit_warning(f"Large wontfix batch detected ({preview_count} issues).")
     if strict_delta > 0:
         _emit_warning(f"Estimated strict-score debt added now: {strict_delta:.1f} points.")
-    _emit_warning(
+    raise CommandError(
         "Re-run with --confirm-batch-wontfix if this debt is intentional."
     )
-    sys.exit(1)

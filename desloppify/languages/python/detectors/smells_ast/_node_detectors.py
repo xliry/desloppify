@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ast
 
-from desloppify.languages.python.detectors.smells_ast._shared import (
+from desloppify.languages.python.detectors.smells_ast._helpers import (
     _is_docstring,
     _is_return_none,
 )
@@ -157,7 +157,7 @@ def _collect_nested_lambdas(
 
 
 def _format_inner_def_names(inner_defs: list[ast.AST]) -> str:
-    """Format inner def names for the finding content string."""
+    """Format inner def names for the issue content string."""
     names = [
         getattr(d, "name", "<lambda>")
         for d in inner_defs[:5]

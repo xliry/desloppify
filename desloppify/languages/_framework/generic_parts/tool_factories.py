@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from desloppify.languages._framework.base.types import (
     DetectorPhase,
@@ -16,15 +17,14 @@ from desloppify.languages._framework.generic_parts.tool_runner import (
     SubprocessRun,
     ToolRunResult,
     resolve_command_argv,
-    run_tool,
     run_tool_result,
 )
 from desloppify.languages._framework.generic_parts.tool_spec import ToolSpec
-from desloppify.state import make_finding
+from desloppify.state import make_issue
 
 
 def _record_tool_failure_coverage(
-    lang: object,
+    lang: Any,
     *,
     detector: str,
     label: str,
@@ -67,7 +67,7 @@ def make_tool_phase(
     """Create a DetectorPhase that runs an external tool and parses output."""
     parser = PARSERS[fmt]
 
-    def run(path: Path, lang: object) -> tuple[list, dict]:
+    def run(path: Path, lang: Any) -> tuple[list[dict[str, Any]], dict[str, int]]:
         run_result = run_tool_result(cmd, path, parser)
         if run_result.status == "error":
             _record_tool_failure_coverage(
@@ -80,8 +80,8 @@ def make_tool_phase(
         entries = list(run_result.entries)
         if not entries:
             return [], {}
-        findings = [
-            make_finding(
+        issues = [
+            make_issue(
                 smell_id,
                 entry["file"],
                 f"{smell_id}::{entry['line']}",
@@ -91,21 +91,23 @@ def make_tool_phase(
             )
             for entry in entries
         ]
-        return findings, {smell_id: len(entries)}
+        return issues, {smell_id: len(entries)}
 
     return DetectorPhase(label, run)
 
 
 def make_detect_fn(
     cmd: str,
-    parser: Callable[[str, Path], list[dict]],
+    parser: Callable[[str, Path], list[dict[str, Any]]],
     *,
     run_subprocess: SubprocessRun | None = None,
 ) -> Callable:
     """Create detect function that runs a tool with an optional injected runner."""
+
     def detect(path, **kwargs):
         del kwargs
-        return run_tool(cmd, path, parser, run_subprocess=run_subprocess)
+        result = run_tool_result(cmd, path, parser, run_subprocess=run_subprocess)
+        return list(result.entries)
 
     return detect
 
@@ -158,15 +160,8 @@ def make_generic_fixer(
     )
 
 
-# Backwards-compatible aliases for historical import sites.
-make_detect_fn_with_runner = make_detect_fn
-make_generic_fixer_with_runner = make_generic_fixer
-
-
 __all__ = [
     "make_detect_fn",
-    "make_detect_fn_with_runner",
     "make_generic_fixer",
-    "make_generic_fixer_with_runner",
     "make_tool_phase",
 ]

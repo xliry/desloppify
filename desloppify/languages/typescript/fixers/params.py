@@ -2,10 +2,11 @@
 
 import re
 
+from desloppify.languages._framework.base.types import FixResult
 from desloppify.languages.typescript.fixers.fixer_io import apply_fixer
 
 
-def fix_unused_params(entries: list[dict], *, dry_run: bool = False) -> list[dict]:
+def fix_unused_params(entries: list[dict], *, dry_run: bool = False) -> FixResult:
     """Prefix unused function/callback/catch parameters with _ to signal intentional non-use."""
 
     def _transform(lines: list[str], file_entries: list[dict]):
@@ -16,7 +17,7 @@ def fix_unused_params(entries: list[dict], *, dry_run: bool = False) -> list[dic
                 removed_names.append(removed_name)
         return lines, removed_names
 
-    return apply_fixer(entries, _transform, dry_run=dry_run)
+    return FixResult(entries=apply_fixer(entries, _transform, dry_run=dry_run))
 
 
 def _rewrite_unused_param(lines: list[str], entry: dict) -> str | None:

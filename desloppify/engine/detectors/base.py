@@ -67,3 +67,9 @@ class GodRule:
     description: str
     extract: Callable  # (ClassInfo) -> int
     threshold: int
+
+
+# ── Shared thresholds (concern generator + detectors) ─────
+ELEVATED_PARAMS_THRESHOLD = 8
+ELEVATED_NESTING_THRESHOLD = 6
+ELEVATED_LOC_THRESHOLD = 300

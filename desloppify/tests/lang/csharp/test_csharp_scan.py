@@ -6,7 +6,7 @@ from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
 
-from desloppify.engine.planning.core import generate_findings
+from desloppify.engine.planning import generate_issues
 from desloppify.engine.planning.scan import PlanScanOptions
 from desloppify.languages._framework.runtime import LangRunOverrides, make_lang_run
 from desloppify.languages.csharp import CSharpConfig
@@ -25,17 +25,17 @@ def _signal_rich_area(filepath: str) -> str:
 
 def test_csharp_scan_pipeline_runs_on_fixture():
     path = (Path("desloppify") / "tests" / "fixtures" / "csharp" / "simple_app").resolve()
-    findings, potentials = generate_findings(
+    issues, potentials = generate_issues(
         path, lang=CSharpConfig(), options=PlanScanOptions(include_slow=False)
     )
-    assert isinstance(findings, list)
+    assert isinstance(issues, list)
     assert isinstance(potentials, dict)
     assert "structural" in potentials
 
 
 def test_csharp_objective_profile_skips_subjective_review():
     path = (Path("desloppify") / "tests" / "fixtures" / "csharp" / "simple_app").resolve()
-    _, potentials = generate_findings(
+    _, potentials = generate_issues(
         path,
         lang=CSharpConfig(),
         options=PlanScanOptions(include_slow=False, profile="objective"),
@@ -45,7 +45,7 @@ def test_csharp_objective_profile_skips_subjective_review():
 
 def test_csharp_full_profile_keeps_subjective_review():
     path = (Path("desloppify") / "tests" / "fixtures" / "csharp" / "simple_app").resolve()
-    _, potentials = generate_findings(
+    _, potentials = generate_issues(
         path,
         lang=CSharpConfig(),
         options=PlanScanOptions(include_slow=False, profile="full"),
@@ -53,46 +53,46 @@ def test_csharp_full_profile_keeps_subjective_review():
     assert "subjective_review" in potentials
 
 
-def test_csharp_signal_rich_fixture_emits_meaningful_findings(tmp_path):
+def test_csharp_signal_rich_fixture_emits_meaningful_issues(tmp_path):
     fixture = (Path("desloppify") / "tests" / "fixtures" / "csharp" / "signal_rich").resolve()
     path = (tmp_path / "signal_rich").resolve()
     shutil.copytree(fixture, path)
     config = CSharpConfig()
     config.get_area = _signal_rich_area
-    findings, _potentials = generate_findings(
+    issues, _potentials = generate_issues(
         path,
         lang=config,
         options=PlanScanOptions(include_slow=False, profile="objective"),
     )
 
-    by_detector = Counter(f["detector"] for f in findings)
+    by_detector = Counter(f["detector"] for f in issues)
     assert by_detector["security"] >= 1
     assert by_detector["single_use"] >= 1
     assert by_detector["orphaned"] >= 1
     assert by_detector["structural"] >= 1
 
-    orphan = next(f for f in findings if f["detector"] == "orphaned")
+    orphan = next(f for f in issues if f["detector"] == "orphaned")
     assert orphan["confidence"] == "medium"
     assert orphan["detail"]["corroboration_count"] >= 2
     assert "corroboration_min_required" in orphan["detail"]
     assert "import_count" in orphan["detail"]
     assert "complexity_score" in orphan["detail"]
 
-    single_use = next(f for f in findings if f["detector"] == "single_use")
+    single_use = next(f for f in issues if f["detector"] == "single_use")
     assert single_use["confidence"] == "low"
     assert "corroboration_count" in single_use["detail"]
     assert "corroboration_min_required" in single_use["detail"]
     assert "import_count" in single_use["detail"]
 
 
-def test_csharp_signal_rich_fixture_findings_are_deterministic(tmp_path):
+def test_csharp_signal_rich_fixture_issues_are_deterministic(tmp_path):
     fixture = (Path("desloppify") / "tests" / "fixtures" / "csharp" / "signal_rich").resolve()
     path = (tmp_path / "signal_rich").resolve()
     shutil.copytree(fixture, path)
 
     cfg_a = CSharpConfig()
     cfg_a.get_area = _signal_rich_area
-    findings_a, _ = generate_findings(
+    issues_a, _ = generate_issues(
         path,
         lang=cfg_a,
         options=PlanScanOptions(include_slow=False, profile="objective"),
@@ -100,13 +100,13 @@ def test_csharp_signal_rich_fixture_findings_are_deterministic(tmp_path):
 
     cfg_b = CSharpConfig()
     cfg_b.get_area = _signal_rich_area
-    findings_b, _ = generate_findings(
+    issues_b, _ = generate_issues(
         path,
         lang=cfg_b,
         options=PlanScanOptions(include_slow=False, profile="objective"),
     )
 
-    def _stable_projection(findings: list[dict]) -> list[tuple]:
+    def _stable_projection(issues: list[dict]) -> list[tuple]:
         return sorted(
             (
                 f["id"],
@@ -116,10 +116,10 @@ def test_csharp_signal_rich_fixture_findings_are_deterministic(tmp_path):
                 f["confidence"],
                 f["summary"],
             )
-            for f in findings
+            for f in issues
         )
 
-    assert _stable_projection(findings_a) == _stable_projection(findings_b)
+    assert _stable_projection(issues_a) == _stable_projection(issues_b)
 
 
 def test_csharp_actionability_gate_downgrades_without_corroboration():
@@ -130,7 +130,7 @@ def test_csharp_actionability_gate_downgrades_without_corroboration():
         complexity_threshold=20,
         runtime_setting=lambda key, default=None: settings.get(key, default),
     )
-    findings = [
+    issues = [
         {
             "detector": "orphaned",
             "file": "src/Foo.cs",
@@ -140,10 +140,10 @@ def test_csharp_actionability_gate_downgrades_without_corroboration():
     ]
     entries = [{"file": "src/Foo.cs", "loc": 80, "import_count": 1}]
 
-    _apply_csharp_actionability_gates(findings, entries, lang)
+    _apply_csharp_actionability_gates(issues, entries, lang)
 
-    assert findings[0]["confidence"] == "low"
-    assert findings[0]["detail"]["corroboration_count"] == 0
+    assert issues[0]["confidence"] == "low"
+    assert issues[0]["detail"]["corroboration_count"] == 0
 
 
 def test_csharp_actionability_gate_keeps_medium_with_multiple_signals():
@@ -154,7 +154,7 @@ def test_csharp_actionability_gate_keeps_medium_with_multiple_signals():
         complexity_threshold=20,
         runtime_setting=lambda key, default=None: settings.get(key, default),
     )
-    findings = [
+    issues = [
         {
             "detector": "single_use",
             "file": "src/Foo.cs",
@@ -164,10 +164,10 @@ def test_csharp_actionability_gate_keeps_medium_with_multiple_signals():
     ]
     entries = [{"file": "src/Foo.cs", "loc": 650, "import_count": 6}]
 
-    _apply_csharp_actionability_gates(findings, entries, lang)
+    _apply_csharp_actionability_gates(issues, entries, lang)
 
-    assert findings[0]["confidence"] == "medium"
-    assert findings[0]["detail"]["corroboration_count"] == 3
+    assert issues[0]["confidence"] == "medium"
+    assert issues[0]["detail"]["corroboration_count"] == 3
 
 
 def test_csharp_actionability_gate_respects_configurable_signal_minimum():
@@ -181,7 +181,7 @@ def test_csharp_actionability_gate_respects_configurable_signal_minimum():
         complexity_threshold=20,
         runtime_setting=lambda key, default=None: settings.get(key, default),
     )
-    findings = [
+    issues = [
         {
             "detector": "single_use",
             "file": "src/Foo.cs",
@@ -191,11 +191,11 @@ def test_csharp_actionability_gate_respects_configurable_signal_minimum():
     ]
     entries = [{"file": "src/Foo.cs", "loc": 650, "import_count": 6}]
 
-    _apply_csharp_actionability_gates(findings, entries, lang)
+    _apply_csharp_actionability_gates(issues, entries, lang)
 
-    assert findings[0]["detail"]["corroboration_count"] == 2
-    assert findings[0]["detail"]["corroboration_min_required"] == 3
-    assert findings[0]["confidence"] == "low"
+    assert issues[0]["detail"]["corroboration_count"] == 2
+    assert issues[0]["detail"]["corroboration_min_required"] == 3
+    assert issues[0]["confidence"] == "low"
 
 
 def test_csharp_scan_uses_roslyn_cmd_override_from_lang_config(monkeypatch):
@@ -234,13 +234,13 @@ def test_csharp_scan_uses_roslyn_cmd_override_from_lang_config(monkeypatch):
             runtime_options={"roslyn_cmd": "override-roslyn --json"}
         ),
     )
-    findings, potentials = generate_findings(
+    issues, potentials = generate_issues(
         path,
         lang=lang_run,
         options=PlanScanOptions(include_slow=False, profile="objective"),
     )
 
-    assert findings is not None
+    assert issues is not None
     assert "cycles" in potentials
     cmd = captured["args"][0]
     assert isinstance(cmd, list)

@@ -22,24 +22,32 @@ from desloppify.languages._framework.generic import (
     parse_json,
     parse_rubocop,
 )
+from desloppify.languages._framework.generic_parts.parsers import ToolParserError
 from desloppify.languages._framework.generic_parts.tool_factories import (
     make_generic_fixer,
 )
-from desloppify.languages._framework.generic_parts.parsers import ToolParserError
+from desloppify.languages._framework.generic_parts.tool_runner import (
+    run_tool_result,
+)
 from desloppify.languages._framework.generic_parts.tool_spec import (
     normalize_tool_specs,
-)
-from desloppify.languages._framework.generic_parts.tool_runner import (
-    run_tool,
-    run_tool_result,
 )
 
 
 @pytest.fixture
 def _cleanup_registry():
-    """Auto-cleanup generic plugins registered during a test."""
-    from desloppify.languages._framework import registry_state
+    """Auto-cleanup generic plugins registered during a test.
 
+    Ensures built-in discovery runs before snapshotting so we don't
+    accidentally remove built-in languages during cleanup (module-level
+    ``@register_lang`` decorators won't re-fire on re-import).
+    """
+    from desloppify.languages._framework import registry_state
+    from desloppify.languages._framework.discovery import load_all
+
+    # Ensure built-in plugins are loaded before snapshotting, so the
+    # snapshot includes them and cleanup only removes test-specific entries.
+    load_all()
     before = set(registry_state.all_keys())
     yield
     for name in set(registry_state.all_keys()) - before:
@@ -231,31 +239,31 @@ class TestParseEslint:
 
 
 class TestMakeToolPhase:
-    def test_missing_tool_returns_no_findings(self):
+    def test_missing_tool_returns_no_issues(self):
         phase = make_tool_phase("test", "nonexistent_tool_xyz_123", "gnu", "test_id", 2)
         with patch("subprocess.run", side_effect=FileNotFoundError):
-            findings, signals = phase.run(Path("."), None)
-        assert findings == []
+            issues, signals = phase.run(Path("."), None)
+        assert issues == []
         assert signals == {}
 
-    def test_timeout_returns_no_findings(self):
+    def test_timeout_returns_no_issues(self):
         phase = make_tool_phase("test", "sleep 999", "gnu", "test_id", 2)
         with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("cmd", 120)):
-            findings, signals = phase.run(Path("."), None)
-        assert findings == []
+            issues, signals = phase.run(Path("."), None)
+        assert issues == []
         assert signals == {}
 
     def test_missing_tool_records_coverage_degradation(self):
         phase = make_tool_phase("test", "nonexistent_tool_xyz_123", "gnu", "test_id", 2)
         lang = SimpleNamespace(detector_coverage={}, coverage_warnings=[])
         with patch("subprocess.run", side_effect=FileNotFoundError):
-            findings, signals = phase.run(Path("."), lang)
-        assert findings == []
+            issues, signals = phase.run(Path("."), lang)
+        assert issues == []
         assert signals == {}
         assert lang.detector_coverage["test_id"]["status"] == "reduced"
         assert lang.detector_coverage["test_id"]["reason"] == "tool_not_found"
 
-    def test_gnu_output_produces_findings(self):
+    def test_gnu_output_produces_issues(self):
         phase = make_tool_phase("test", "fake", "gnu", "test_lint", 2)
         mock_result = subprocess.CompletedProcess(
             args="fake",
@@ -264,11 +272,11 @@ class TestMakeToolPhase:
             stderr="",
         )
         with patch("subprocess.run", return_value=mock_result):
-            findings, signals = phase.run(Path("."), None)
-        assert len(findings) == 2
+            issues, signals = phase.run(Path("."), None)
+        assert len(issues) == 2
         assert signals == {"test_lint": 2}
-        assert findings[0]["detector"] == "test_lint"
-        assert findings[0]["summary"] == "something wrong"
+        assert issues[0]["detector"] == "test_lint"
+        assert issues[0]["summary"] == "something wrong"
 
     def test_empty_output_returns_empty(self):
         phase = make_tool_phase("test", "fake", "gnu", "test_id", 2)
@@ -276,11 +284,11 @@ class TestMakeToolPhase:
             args="fake", returncode=0, stdout="", stderr=""
         )
         with patch("subprocess.run", return_value=mock_result):
-            findings, signals = phase.run(Path("."), None)
-        assert findings == []
+            issues, signals = phase.run(Path("."), None)
+        assert issues == []
         assert signals == {}
 
-    def test_run_tool_parser_exception_returns_empty(self, tmp_path):
+    def test_run_tool_parser_exception_returns_error(self, tmp_path):
         mock_result = subprocess.CompletedProcess(
             args="fake",
             returncode=1,
@@ -291,13 +299,15 @@ class TestMakeToolPhase:
         def _raising_parser(_output: str, _scan_path: Path) -> list[dict]:
             raise ValueError("bad parser row")
 
-        entries = run_tool(
+        result = run_tool_result(
             "fake",
             tmp_path,
             _raising_parser,
             run_subprocess=lambda *_a, **_k: mock_result,
         )
-        assert entries == []
+        assert result.status == "error"
+        assert result.error_kind == "parser_exception"
+        assert result.entries == []
 
     def test_run_tool_result_distinguishes_empty_vs_error(self, tmp_path):
         clean = subprocess.CompletedProcess(args="fake", returncode=0, stdout="", stderr="")
@@ -534,7 +544,7 @@ class TestLangsCommand:
 
 class TestDynamicRegistration:
     def test_register_detector_adds_to_detectors_dict(self):
-        from desloppify.core.registry import DETECTORS, DetectorMeta, register_detector
+        from desloppify.base.registry import DETECTORS, DetectorMeta, register_detector
 
         name = "_test_reg_det_1"
         register_detector(DetectorMeta(
@@ -546,7 +556,7 @@ class TestDynamicRegistration:
         del DETECTORS[name]
 
     def test_register_detector_appends_to_display_order(self):
-        from desloppify.core.registry import (
+        from desloppify.base.registry import (
             _DISPLAY_ORDER,
             DETECTORS,
             DetectorMeta,
@@ -563,14 +573,13 @@ class TestDynamicRegistration:
         _DISPLAY_ORDER.remove(name)
 
     def test_register_scoring_policy_rebuilds_dimensions(self):
-        from desloppify.scoring import (
+        from desloppify.engine._scoring.policy.core import (
             DETECTOR_SCORING_POLICIES,
             DIMENSIONS,
             FILE_BASED_DETECTORS,
             DetectorScoringPolicy,
             register_scoring_policy,
         )
-
         name = "_test_reg_pol_1"
         register_scoring_policy(DetectorScoringPolicy(
             detector=name, dimension="Code quality", tier=3, file_based=True,
@@ -582,7 +591,7 @@ class TestDynamicRegistration:
 
     def test_register_detector_auto_refreshes_narrative(self):
         """register_detector should auto-refresh DETECTOR_TOOLS via callback."""
-        from desloppify.core.registry import DETECTORS, DetectorMeta, register_detector
+        from desloppify.base.registry import DETECTORS, DetectorMeta, register_detector
         from desloppify.intelligence.narrative._constants import DETECTOR_TOOLS
 
         name = "_test_auto_refresh_1"
@@ -601,8 +610,8 @@ class TestDynamicRegistration:
 
 @pytest.mark.usefixtures("_cleanup_registry")
 class TestScoringIntegration:
-    def test_generic_findings_contribute_to_code_quality_dimension(self):
-        from desloppify.scoring import DIMENSIONS
+    def test_generic_issues_contribute_to_code_quality_dimension(self):
+        from desloppify.engine._scoring.policy.core import DIMENSIONS
 
         generic_lang(
             name="test_scoring_1",
@@ -612,8 +621,8 @@ class TestScoringIntegration:
         cq = next(d for d in DIMENSIONS if d.name == "Code quality")
         assert "test_score_det_1" in cq.detectors
 
-    def test_generic_findings_score_with_correct_tier(self):
-        from desloppify.scoring import DETECTOR_SCORING_POLICIES
+    def test_generic_issues_score_with_correct_tier(self):
+        from desloppify.engine._scoring.policy.core import DETECTOR_SCORING_POLICIES
 
         generic_lang(
             name="test_scoring_2",

@@ -25,7 +25,10 @@ def test_build_dep_graph_resolves_relative_and_package_self_imports(tmp_path):
     b = _write(tmp_path, "lib/b.dart", "import 'dart:io';\n")
     c = _write(tmp_path, "lib/src/c.dart", "")
 
-    with patch("desloppify.utils.PROJECT_ROOT", tmp_path):
+    with patch(
+        "desloppify.languages.dart.detectors.deps.get_project_root",
+        return_value=tmp_path,
+    ):
         graph = build_dep_graph(tmp_path / "lib")
 
     a_key = str(a.resolve())
@@ -48,7 +51,10 @@ def test_build_dep_graph_ignores_external_package_imports(tmp_path):
     )
     lib2 = _write(tmp_path, "lib/lib2.dart", "")
 
-    with patch("desloppify.utils.PROJECT_ROOT", tmp_path):
+    with patch(
+        "desloppify.languages.dart.detectors.deps.get_project_root",
+        return_value=tmp_path,
+    ):
         graph = build_dep_graph(tmp_path / "lib")
 
     main_key = str(main.resolve())

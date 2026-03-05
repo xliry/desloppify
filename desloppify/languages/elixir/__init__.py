@@ -21,3 +21,8 @@ generic_lang(
     detect_markers=["mix.exs"],
     treesitter_spec=ELIXIR_SPEC,
 )
+
+__all__ = [
+    "generic_lang",
+    "ELIXIR_SPEC",
+]

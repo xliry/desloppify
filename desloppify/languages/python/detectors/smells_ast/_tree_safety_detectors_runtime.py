@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from desloppify.languages.python.detectors.smells_ast._shared import _iter_nodes
+from desloppify.languages.python.detectors.smells_ast._helpers import _iter_nodes
 
 _CLI_FILENAMES = {"cli.py", "__main__.py", "manage.py", "setup.py"}
 _CLI_DIR_PATTERNS = {"/commands/", "/management/"}

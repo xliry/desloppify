@@ -10,9 +10,9 @@ duplicating the phase construction logic.
 
 from __future__ import annotations
 
+from desloppify.base.output.terminal import log
 from desloppify.languages._framework.base.types import DetectorPhase
-from desloppify.state import make_finding
-from desloppify.core.output_api import log
+from desloppify.state import make_issue
 
 # ── Phase factories ────────────────────────────────────────
 
@@ -27,12 +27,12 @@ def make_ast_smells_phase(spec) -> DetectorPhase:
         )
 
         file_list = lang.file_finder(path)
-        findings = []
+        issues = []
         potentials: dict[str, int] = {}
 
         catches = detect_empty_catches(file_list, spec)
         for e in catches:
-            findings.append(make_finding(
+            issues.append(make_issue(
                 "smells", e["file"], f"empty_catch::{e['line']}",
                 tier=3, confidence="high",
                 summary=f"Empty {e['type']} — swallows errors silently",
@@ -43,7 +43,7 @@ def make_ast_smells_phase(spec) -> DetectorPhase:
 
         unreachable = detect_unreachable_code(file_list, spec)
         for e in unreachable:
-            findings.append(make_finding(
+            issues.append(make_issue(
                 "smells", e["file"], f"unreachable_code::{e['line']}",
                 tier=3, confidence="high",
                 summary=f"Unreachable code after {e['after']}",
@@ -52,7 +52,7 @@ def make_ast_smells_phase(spec) -> DetectorPhase:
             potentials["unreachable_code"] = len(unreachable)
             log(f"         unreachable code: {len(unreachable)}")
 
-        return findings, potentials
+        return issues, potentials
 
     return DetectorPhase("AST smells", run)
 
@@ -66,13 +66,13 @@ def make_cohesion_phase(spec) -> DetectorPhase:
         )
 
         file_list = lang.file_finder(path)
-        findings = []
+        issues = []
         potentials: dict[str, int] = {}
 
         entries, checked = detect_responsibility_cohesion(file_list, spec)
         for e in entries:
             families = ", ".join(e["families"][:4])
-            findings.append(make_finding(
+            issues.append(make_issue(
                 "responsibility_cohesion", e["file"],
                 f"cohesion::{e['file']}",
                 tier=3, confidence="medium",
@@ -86,7 +86,7 @@ def make_cohesion_phase(spec) -> DetectorPhase:
             potentials["responsibility_cohesion"] = len(entries)
             log(f"         low-cohesion files: {len(entries)}")
 
-        return findings, potentials
+        return issues, potentials
 
     return DetectorPhase("Responsibility cohesion", run)
 
@@ -100,12 +100,12 @@ def make_unused_imports_phase(spec) -> DetectorPhase:
         )
 
         file_list = lang.file_finder(path)
-        findings = []
+        issues = []
         potentials: dict[str, int] = {}
 
         entries = detect_unused_imports(file_list, spec)
         for e in entries:
-            findings.append(make_finding(
+            issues.append(make_issue(
                 "unused", e["file"], f"unused_import::{e['line']}",
                 tier=3, confidence="medium",
                 summary=f"Unused import: {e['name']}",
@@ -114,7 +114,7 @@ def make_unused_imports_phase(spec) -> DetectorPhase:
             potentials["unused_imports"] = len(entries)
             log(f"         unused imports: {len(entries)}")
 
-        return findings, potentials
+        return issues, potentials
 
     return DetectorPhase("Unused imports", run)
 

@@ -15,7 +15,7 @@ from desloppify.engine.policy.zones import (
     adjust_potential,
     classify_file,
     filter_entries,
-    should_skip_finding,
+    should_skip_issue,
 )
 
 # ── _match_pattern() ─────────────────────────────────────────
@@ -576,11 +576,11 @@ class TestAdjustPotential:
         assert adjust_potential(zm, 0) == 0
 
 
-# ── should_skip_finding() ────────────────────────────────────
+# ── should_skip_issue() ────────────────────────────────────
 
 
-class TestShouldSkipFinding:
-    """Tests for the should_skip_finding helper."""
+class TestShouldSkipIssue:
+    """Tests for the should_skip_issue helper."""
 
     @pytest.fixture
     def zone_map(self):
@@ -594,45 +594,45 @@ class TestShouldSkipFinding:
 
     def test_skip_in_test_zone(self, zone_map):
         """Detectors in TEST skip_detectors are skipped for test files."""
-        assert should_skip_finding(zone_map, "tests/test_app.py", "dupes") is True
-        assert should_skip_finding(zone_map, "tests/test_app.py", "coupling") is True
+        assert should_skip_issue(zone_map, "tests/test_app.py", "dupes") is True
+        assert should_skip_issue(zone_map, "tests/test_app.py", "coupling") is True
         assert (
-            should_skip_finding(zone_map, "tests/test_app.py", "test_coverage") is True
+            should_skip_issue(zone_map, "tests/test_app.py", "test_coverage") is True
         )
-        assert should_skip_finding(zone_map, "tests/test_app.py", "security") is True
+        assert should_skip_issue(zone_map, "tests/test_app.py", "security") is True
 
     def test_allow_in_test_zone(self, zone_map):
         """Detectors NOT in TEST skip_detectors are allowed for test files."""
-        assert should_skip_finding(zone_map, "tests/test_app.py", "unused") is False
-        assert should_skip_finding(zone_map, "tests/test_app.py", "logs") is False
+        assert should_skip_issue(zone_map, "tests/test_app.py", "unused") is False
+        assert should_skip_issue(zone_map, "tests/test_app.py", "logs") is False
 
     def test_production_never_skips(self, zone_map):
         """PRODUCTION zone never skips any detector."""
-        assert should_skip_finding(zone_map, "src/app.py", "dupes") is False
-        assert should_skip_finding(zone_map, "src/app.py", "smells") is False
-        assert should_skip_finding(zone_map, "src/app.py", "coupling") is False
+        assert should_skip_issue(zone_map, "src/app.py", "dupes") is False
+        assert should_skip_issue(zone_map, "src/app.py", "smells") is False
+        assert should_skip_issue(zone_map, "src/app.py", "coupling") is False
 
     def test_vendor_skips_most(self, zone_map):
         """VENDOR zone skips most detectors."""
-        assert should_skip_finding(zone_map, "vendor/lib.py", "unused") is True
-        assert should_skip_finding(zone_map, "vendor/lib.py", "smells") is True
-        assert should_skip_finding(zone_map, "vendor/lib.py", "naming") is True
-        assert should_skip_finding(zone_map, "vendor/lib.py", "test_coverage") is True
+        assert should_skip_issue(zone_map, "vendor/lib.py", "unused") is True
+        assert should_skip_issue(zone_map, "vendor/lib.py", "smells") is True
+        assert should_skip_issue(zone_map, "vendor/lib.py", "naming") is True
+        assert should_skip_issue(zone_map, "vendor/lib.py", "test_coverage") is True
 
     def test_script_skips_subset(self, zone_map):
         """SCRIPT zone skips only its specific detectors."""
-        assert should_skip_finding(zone_map, "scripts/deploy.sh", "coupling") is True
-        assert should_skip_finding(zone_map, "scripts/deploy.sh", "facade") is True
+        assert should_skip_issue(zone_map, "scripts/deploy.sh", "coupling") is True
+        assert should_skip_issue(zone_map, "scripts/deploy.sh", "facade") is True
         # But not smells
-        assert should_skip_finding(zone_map, "scripts/deploy.sh", "smells") is False
+        assert should_skip_issue(zone_map, "scripts/deploy.sh", "smells") is False
 
     def test_none_zone_map_never_skips(self):
         """Returns False when zone_map is None (backward compat)."""
-        assert should_skip_finding(None, "tests/test_app.py", "dupes") is False
+        assert should_skip_issue(None, "tests/test_app.py", "dupes") is False
 
     def test_unknown_file_defaults_production(self, zone_map):
         """File not in the map is treated as PRODUCTION (no skips)."""
-        assert should_skip_finding(zone_map, "unknown.py", "dupes") is False
+        assert should_skip_issue(zone_map, "unknown.py", "dupes") is False
 
 
 # ── filter_entries() ─────────────────────────────────────────

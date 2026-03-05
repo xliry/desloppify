@@ -10,7 +10,7 @@ def _item(*, id: str, detector: str = "smells", file: str = "a.py") -> dict:
         "id": id,
         "detector": detector,
         "file": file,
-        "summary": "test finding",
+        "summary": "test issue",
         "detail": {},
         "kind": "",
     }

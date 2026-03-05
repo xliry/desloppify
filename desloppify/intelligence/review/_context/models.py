@@ -86,8 +86,8 @@ class ReviewContext:
     zone_distribution: SectionPayload = field(
         default_factory=lambda: _empty_section("zone_distribution")
     )
-    existing_findings: SectionPayload = field(
-        default_factory=lambda: _empty_section("existing_findings")
+    existing_issues: SectionPayload = field(
+        default_factory=lambda: _empty_section("existing_issues")
     )
     codebase_stats: SectionPayload = field(
         default_factory=lambda: _empty_section("codebase_stats")
@@ -111,7 +111,7 @@ class ReviewContext:
         "module_patterns",
         "import_graph_summary",
         "zone_distribution",
-        "existing_findings",
+        "existing_issues",
         "codebase_stats",
         "sibling_conventions",
         "ai_debt_signals",

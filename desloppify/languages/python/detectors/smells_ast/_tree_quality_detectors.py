@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ast
 
-from desloppify.languages.python.detectors.smells_ast._shared import (
+from desloppify.languages.python.detectors.smells_ast._helpers import (
     _is_docstring,
     _is_log_or_print,
     _is_return_none,
@@ -21,64 +21,11 @@ from desloppify.languages.python.detectors.smells_ast._tree_quality_detectors_ty
 __all__ = [
     "_detect_annotation_quality",
     "_detect_constant_return",
-    "_detect_mutable_class_var",
+    "_detect_del_param",
     "_detect_noop_function",
     "_detect_optional_param_sprawl",
     "_detect_unreachable_code",
 ]
-
-
-def _detect_mutable_class_var(
-    filepath: str,
-    tree: ast.Module,
-    smell_counts: dict[str, list],
-    *,
-    all_nodes: tuple[ast.AST, ...] | None = None,
-):
-    """Flag class-level mutable defaults (shared across all instances).
-
-    Detects: class Foo: data = [] / data = {} / data: list = []
-    Skips dataclasses (which use field(default_factory=...)) and __init__ assignments.
-    """
-    for node in _iter_nodes(tree, all_nodes, ast.ClassDef):
-        # Skip dataclasses (they handle mutable defaults via field())
-        is_dataclass = any(
-            (isinstance(d, ast.Name) and d.id == "dataclass")
-            or (
-                isinstance(d, ast.Call)
-                and isinstance(d.func, ast.Name)
-                and d.func.id == "dataclass"
-            )
-            or (isinstance(d, ast.Attribute) and d.attr == "dataclass")
-            for d in node.decorator_list
-        )
-        if is_dataclass:
-            continue
-
-        for stmt in node.body:
-            # Plain assignment: data = [] or data = {}
-            if isinstance(stmt, ast.Assign):
-                if isinstance(stmt.value, ast.List | ast.Dict | ast.Set):
-                    names = [t.id for t in stmt.targets if isinstance(t, ast.Name)]
-                    for name in names:
-                        smell_counts["mutable_class_var"].append(
-                            {
-                                "file": filepath,
-                                "line": stmt.lineno,
-                                "content": f"{node.name}.{name} = {ast.dump(stmt.value)[:40]}",
-                            }
-                        )
-            # Annotated assignment: data: list = []
-            elif isinstance(stmt, ast.AnnAssign) and stmt.value is not None:
-                if isinstance(stmt.value, ast.List | ast.Dict | ast.Set):
-                    name = stmt.target.id if isinstance(stmt.target, ast.Name) else "?"
-                    smell_counts["mutable_class_var"].append(
-                        {
-                            "file": filepath,
-                            "line": stmt.lineno,
-                            "content": f"{node.name}.{name}: ... = {ast.dump(stmt.value)[:40]}",
-                        }
-                    )
 
 
 def _detect_unreachable_code(
@@ -222,10 +169,16 @@ def _detect_noop_function(
         "__bool__",
         "__len__",
     }
+    _DISPLAY_HELPER_PREFIXES = ("_print_", "_render_", "_show_")
 
     results: list[dict] = []
     for node in _iter_nodes(tree, all_nodes, (ast.FunctionDef, ast.AsyncFunctionDef)):
         if node.name in _SKIP_NAMES:
+            continue
+        if (
+            "app/commands/" in filepath.replace("\\", "/")
+            and node.name.startswith(_DISPLAY_HELPER_PREFIXES)
+        ):
             continue
         # Skip decorated functions (abstract methods, properties, etc.)
         if node.decorator_list:
@@ -260,4 +213,45 @@ def _detect_noop_function(
                     "content": f"{node.name}() — {len(body)} statements, all trivial (pass/return/log)",
                 }
             )
+    return results
+
+
+def _detect_del_param(
+    filepath: str,
+    tree: ast.Module,
+    *,
+    all_nodes: tuple[ast.AST, ...] | None = None,
+) -> list[dict]:
+    """Flag functions that ``del`` a parameter in the first 3 body statements.
+
+    ``del param`` immediately after receiving it means the parameter shouldn't
+    be in the signature at all — the caller shouldn't be passing it.
+    """
+    results: list[dict] = []
+    for node in _iter_nodes(tree, all_nodes, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        param_names = {
+            a.arg
+            for a in node.args.args + node.args.posonlyargs + node.args.kwonlyargs
+        }
+        if not param_names:
+            continue
+
+        # Strip leading docstring before checking first 3 body statements.
+        body = node.body
+        if body and _is_docstring(body[0]):
+            body = body[1:]
+
+        # Only check first 3 body statements (del is typically early cleanup).
+        for stmt in body[:3]:
+            if not isinstance(stmt, ast.Delete):
+                continue
+            for target in stmt.targets:
+                if isinstance(target, ast.Name) and target.id in param_names:
+                    results.append(
+                        {
+                            "file": filepath,
+                            "line": stmt.lineno,
+                            "content": f"del {target.id} — remove from function signature",
+                        }
+                    )
     return results

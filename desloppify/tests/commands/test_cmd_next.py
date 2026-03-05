@@ -5,22 +5,21 @@ from __future__ import annotations
 import inspect
 from types import SimpleNamespace
 
-import desloppify.intelligence.narrative as narrative_mod
-from desloppify.app.commands import next as next_mod
+import desloppify.app.commands.next.cmd as next_mod
+import desloppify.engine.plan as plan_mod
+import desloppify.intelligence.narrative.core as narrative_mod
 from desloppify.app.commands.helpers.runtime import CommandRuntime
-from desloppify.app.commands.next import _low_subjective_dimensions, cmd_next
+from desloppify.app.commands.next.cmd import _low_subjective_dimensions, cmd_next
 
 
 def _args(**overrides):
     base = {
-        "tier": None,
         "count": 1,
         "scope": None,
         "status": "open",
         "group": "item",
         "format": "terminal",
         "explain": False,
-        "no_tier_fallback": False,
         "output": None,
         "lang": None,
         "path": ".",
@@ -44,9 +43,10 @@ def _patch_common(monkeypatch, *, state, config=None):
             state_path="/tmp/fake-state.json",
         ),
     )
-    monkeypatch.setattr(next_mod, "check_tool_staleness", lambda _state: None)
     monkeypatch.setattr(narrative_mod, "compute_narrative", lambda *a, **k: {})
     monkeypatch.setattr(next_mod, "resolve_lang", lambda _args: None)
+    monkeypatch.setattr(plan_mod, "load_plan", lambda: {})
+    monkeypatch.setattr(next_mod, "load_plan", lambda: {})
 
 
 class TestNextModuleSanity:
@@ -64,7 +64,7 @@ class TestCmdNextOutput:
             monkeypatch,
             state={
                 "last_scan": None,
-                "findings": {},
+                "issues": {},
                 "dimension_scores": {},
                 "scan_path": ".",
             },
@@ -80,147 +80,22 @@ class TestCmdNextOutput:
         out = capsys.readouterr().out
         assert "No scans yet. Run: desloppify scan" in out
 
-    def test_tier_navigator_always_printed(self, monkeypatch, capsys):
-        written = []
-        _patch_common(
-            monkeypatch,
-            state={
-                "findings": {},
-                "dimension_scores": {},
-                "overall_score": 100.0,
-                "objective_score": 100.0,
-                "strict_score": 100.0,
-                "scan_path": ".",
-            },
-        )
-        monkeypatch.setattr(
-            next_mod, "write_query", lambda payload: written.append(payload)
-        )
-        monkeypatch.setattr(
-            next_mod,
-            "build_work_queue",
-            lambda *_a, **_k: {
-                "items": [],
-                "total": 0,
-                "tier_counts": {1: 0, 2: 0, 3: 0, 4: 0},
-                "requested_tier": None,
-                "selected_tier": None,
-                "fallback_reason": None,
-                "available_tiers": [],
-            },
-        )
-
-        cmd_next(_args())
-        out = capsys.readouterr().out
-        assert "Tier Navigator" in out
-        assert "desloppify next --tier 1" in out
-        assert "Nothing to do" in out
-        assert written[0]["command"] == "next"
-        assert written[0]["items"] == []
-
-    def test_tier_fallback_message_and_payload(self, monkeypatch, capsys):
-        written = []
-        _patch_common(
-            monkeypatch,
-            state={
-                "findings": {},
-                "dimension_scores": {},
-                "overall_score": 96.0,
-                "objective_score": 96.0,
-                "strict_score": 96.0,
-                "scan_path": ".",
-            },
-        )
-        monkeypatch.setattr(
-            next_mod, "write_query", lambda payload: written.append(payload)
-        )
-        monkeypatch.setattr(
-            next_mod,
-            "build_work_queue",
-            lambda *_a, **_k: {
-                "items": [
-                    {
-                        "id": "smells::src/a.py::x",
-                        "kind": "finding",
-                        "tier": 2,
-                        "effective_tier": 2,
-                        "confidence": "high",
-                        "detector": "smells",
-                        "file": "src/a.py",
-                        "summary": "Thing to fix",
-                        "detail": {},
-                        "status": "open",
-                        "primary_command": "desloppify plan done ...",
-                    }
-                ],
-                "total": 1,
-                "tier_counts": {1: 0, 2: 1, 3: 0, 4: 0},
-                "requested_tier": 1,
-                "selected_tier": 2,
-                "fallback_reason": "Requested T1 has 0 open -> showing T2 (nearest non-empty).",
-                "available_tiers": [2],
-            },
-        )
-
-        cmd_next(_args(tier=1))
-        out = capsys.readouterr().out
-        assert "Requested T1 has 0 open -> showing T2 (nearest non-empty)." in out
-        assert written[0]["queue"]["requested_tier"] == 1
-        assert written[0]["queue"]["selected_tier"] == 2
-
-    def test_no_tier_fallback_strict_empty_guidance(self, monkeypatch, capsys):
-        written = []
-        _patch_common(
-            monkeypatch,
-            state={
-                "findings": {},
-                "dimension_scores": {},
-                "overall_score": 97.0,
-                "objective_score": 97.0,
-                "strict_score": 97.0,
-                "scan_path": ".",
-            },
-        )
-        monkeypatch.setattr(
-            next_mod, "write_query", lambda payload: written.append(payload)
-        )
-        monkeypatch.setattr(
-            next_mod,
-            "build_work_queue",
-            lambda *_a, **_k: {
-                "items": [],
-                "total": 0,
-                "tier_counts": {1: 2, 2: 1, 3: 0, 4: 0},
-                "requested_tier": 4,
-                "selected_tier": 4,
-                "fallback_reason": "Requested T4 has 0 open.",
-                "available_tiers": [1, 2],
-            },
-        )
-
-        cmd_next(_args(tier=4, no_tier_fallback=True))
-        out = capsys.readouterr().out
-        assert "Requested T4 has 0 open." in out
-        assert "Requested tier: T4" in out
-        assert "Try: desloppify next --tier 1 | desloppify next --tier 2" in out
-        assert written[0]["queue"]["available_tiers"] == [1, 2]
-
     def test_subjective_focus_and_review_prepare_hint(self, monkeypatch, capsys):
         _patch_common(
             monkeypatch,
             state={
-                "findings": {},
+                "issues": {},
                 "dimension_scores": {
                     "Naming quality": {
                         "score": 94.0,
                         "strict": 94.0,
-                        "issues": 2,
+                        "failing": 2,
                         "detectors": {"subjective_assessment": {}},
                     },
                     "Logic clarity": {
                         "score": 96.0,
                         "strict": 96.0,
-                        "issues": 1,
+                        "failing": 1,
                         "detectors": {"subjective_assessment": {}},
                     },
                 },
@@ -238,24 +113,17 @@ class TestCmdNextOutput:
                 "items": [
                     {
                         "id": "smells::src/a.py::x",
-                        "kind": "finding",
-                        "tier": 3,
-                        "effective_tier": 3,
+                        "kind": "issue",
                         "confidence": "medium",
                         "detector": "smells",
                         "file": "src/a.py",
                         "summary": "Fix smell",
                         "detail": {},
                         "status": "open",
-                        "primary_command": "desloppify plan done ...",
+                        "primary_command": "desloppify plan resolve ...",
                     }
                 ],
                 "total": 1,
-                "tier_counts": {1: 0, 2: 0, 3: 1, 4: 0},
-                "requested_tier": None,
-                "selected_tier": None,
-                "fallback_reason": None,
-                "available_tiers": [3],
             },
         )
 
@@ -270,7 +138,7 @@ class TestCmdNextOutput:
         _patch_common(
             monkeypatch,
             state={
-                "findings": {
+                "issues": {
                     "subjective_review::src/a.py::changed": {
                         "id": "subjective_review::src/a.py::changed",
                         "detector": "subjective_review",
@@ -297,24 +165,17 @@ class TestCmdNextOutput:
                 "items": [
                     {
                         "id": "smells::src/a.py::x",
-                        "kind": "finding",
-                        "tier": 3,
-                        "effective_tier": 3,
+                        "kind": "issue",
                         "confidence": "medium",
                         "detector": "smells",
                         "file": "src/a.py",
                         "summary": "Fix smell",
                         "detail": {},
                         "status": "open",
-                        "primary_command": "desloppify plan done ...",
+                        "primary_command": "desloppify plan resolve ...",
                     }
                 ],
                 "total": 1,
-                "tier_counts": {1: 0, 2: 0, 3: 1, 4: 1},
-                "requested_tier": None,
-                "selected_tier": None,
-                "fallback_reason": None,
-                "available_tiers": [3, 4],
             },
         )
 
@@ -331,12 +192,12 @@ class TestCmdNextOutput:
         _patch_common(
             monkeypatch,
             state={
-                "findings": {},
+                "issues": {},
                 "dimension_scores": {
                     "High elegance": {
                         "score": 0.0,
                         "strict": 0.0,
-                        "issues": 0,
+                        "failing": 0,
                         "detectors": {"subjective_assessment": {}},
                     },
                 },
@@ -354,24 +215,17 @@ class TestCmdNextOutput:
                 "items": [
                     {
                         "id": "smells::src/a.py::x",
-                        "kind": "finding",
-                        "tier": 3,
-                        "effective_tier": 3,
+                        "kind": "issue",
                         "confidence": "medium",
                         "detector": "smells",
                         "file": "src/a.py",
                         "summary": "Fix smell",
                         "detail": {},
                         "status": "open",
-                        "primary_command": "desloppify plan done ...",
+                        "primary_command": "desloppify plan resolve ...",
                     }
                 ],
                 "total": 1,
-                "tier_counts": {1: 0, 2: 0, 3: 1, 4: 0},
-                "requested_tier": None,
-                "selected_tier": None,
-                "fallback_reason": None,
-                "available_tiers": [3],
             },
         )
 
@@ -385,7 +239,7 @@ class TestCmdNextOutput:
         _patch_common(
             monkeypatch,
             state={
-                "findings": {
+                "issues": {
                     "subjective_review::.::holistic_unreviewed": {
                         "id": "subjective_review::.::holistic_unreviewed",
                         "detector": "subjective_review",
@@ -412,24 +266,17 @@ class TestCmdNextOutput:
                 "items": [
                     {
                         "id": "smells::src/a.py::x",
-                        "kind": "finding",
-                        "tier": 3,
-                        "effective_tier": 3,
+                        "kind": "issue",
                         "confidence": "medium",
                         "detector": "smells",
                         "file": "src/a.py",
                         "summary": "Fix smell",
                         "detail": {},
                         "status": "open",
-                        "primary_command": "desloppify plan done ...",
+                        "primary_command": "desloppify plan resolve ...",
                     }
                 ],
                 "total": 1,
-                "tier_counts": {1: 0, 2: 0, 3: 1, 4: 1},
-                "requested_tier": None,
-                "selected_tier": None,
-                "fallback_reason": None,
-                "available_tiers": [3, 4],
             },
         )
 
@@ -442,12 +289,12 @@ class TestCmdNextOutput:
         _patch_common(
             monkeypatch,
             state={
-                "findings": {},
+                "issues": {},
                 "dimension_scores": {
                     "Naming quality": {
                         "score": 96.0,
                         "strict": 96.0,
-                        "issues": 1,
+                        "failing": 1,
                         "detectors": {"subjective_assessment": {}},
                     },
                 },
@@ -466,24 +313,17 @@ class TestCmdNextOutput:
                 "items": [
                     {
                         "id": "smells::src/a.py::x",
-                        "kind": "finding",
-                        "tier": 3,
-                        "effective_tier": 3,
+                        "kind": "issue",
                         "confidence": "medium",
                         "detector": "smells",
                         "file": "src/a.py",
                         "summary": "Fix smell",
                         "detail": {},
                         "status": "open",
-                        "primary_command": "desloppify plan done ...",
+                        "primary_command": "desloppify plan resolve ...",
                     }
                 ],
                 "total": 1,
-                "tier_counts": {1: 0, 2: 0, 3: 1, 4: 0},
-                "requested_tier": None,
-                "selected_tier": None,
-                "fallback_reason": None,
-                "available_tiers": [3],
             },
         )
 
@@ -498,7 +338,7 @@ class TestCmdNextOutput:
         _patch_common(
             monkeypatch,
             state={
-                "findings": {},
+                "issues": {},
                 "subjective_integrity": {
                     "status": "penalized",
                     "target_score": 95.0,
@@ -510,13 +350,13 @@ class TestCmdNextOutput:
                     "Naming quality": {
                         "score": 0.0,
                         "strict": 0.0,
-                        "issues": 0,
+                        "failing": 0,
                         "detectors": {"subjective_assessment": {}},
                     },
                     "Logic clarity": {
                         "score": 0.0,
                         "strict": 0.0,
-                        "issues": 0,
+                        "failing": 0,
                         "detectors": {"subjective_assessment": {}},
                     },
                 },
@@ -534,24 +374,17 @@ class TestCmdNextOutput:
                 "items": [
                     {
                         "id": "smells::src/a.py::x",
-                        "kind": "finding",
-                        "tier": 3,
-                        "effective_tier": 3,
+                        "kind": "issue",
                         "confidence": "medium",
                         "detector": "smells",
                         "file": "src/a.py",
                         "summary": "Fix smell",
                         "detail": {},
                         "status": "open",
-                        "primary_command": "desloppify plan done ...",
+                        "primary_command": "desloppify plan resolve ...",
                     }
                 ],
                 "total": 1,
-                "tier_counts": {1: 0, 2: 0, 3: 1, 4: 0},
-                "requested_tier": None,
-                "selected_tier": None,
-                "fallback_reason": None,
-                "available_tiers": [3],
             },
         )
 
@@ -560,7 +393,7 @@ class TestCmdNextOutput:
         assert "were reset to 0.0 this scan" in out
         assert "Anti-gaming safeguard applied" in out
         assert (
-            "review --run-batches --runner codex --parallel --scan-after-import --dimensions"
+            "review --prepare --force-review-rerun --dimensions"
             in out
         )
         assert "naming_quality" in out
@@ -571,7 +404,7 @@ class TestCmdNextOutput:
         _patch_common(
             monkeypatch,
             state={
-                "findings": {},
+                "issues": {},
                 "dimension_scores": {},
                 "overall_score": 99.0,
                 "objective_score": 99.0,
@@ -590,8 +423,6 @@ class TestCmdNextOutput:
                     {
                         "id": "subjective::naming_quality",
                         "kind": "subjective_dimension",
-                        "tier": 4,
-                        "effective_tier": 4,
                         "confidence": "medium",
                         "detector": "subjective_assessment",
                         "file": ".",
@@ -606,11 +437,6 @@ class TestCmdNextOutput:
                     }
                 ],
                 "total": 1,
-                "tier_counts": {1: 0, 2: 0, 3: 0, 4: 1},
-                "requested_tier": None,
-                "selected_tier": None,
-                "fallback_reason": None,
-                "available_tiers": [4],
             },
         )
 
@@ -626,12 +452,12 @@ class TestCmdNextOutput:
         _patch_common(
             monkeypatch,
             state={
-                "findings": {},
+                "issues": {},
                 "dimension_scores": {
                     "Code quality": {
                         "score": 80.0,
                         "strict": 78.0,
-                        "issues": 5,
+                        "failing": 5,
                         "checks": 100,
                         "tier": 2,
                     },
@@ -651,24 +477,17 @@ class TestCmdNextOutput:
                 "items": [
                     {
                         "id": "smells::src/a.py::x",
-                        "kind": "finding",
-                        "tier": 2,
-                        "effective_tier": 2,
+                        "kind": "issue",
                         "confidence": "high",
                         "detector": "smells",
                         "file": "src/a.py",
                         "summary": "Fix smell",
                         "detail": {},
                         "status": "open",
-                        "primary_command": "desloppify plan done ...",
+                        "primary_command": "desloppify plan resolve ...",
                     }
                 ],
                 "total": 1,
-                "tier_counts": {1: 0, 2: 1, 3: 0, 4: 0},
-                "requested_tier": None,
-                "selected_tier": None,
-                "fallback_reason": None,
-                "available_tiers": [2],
             },
         )
 
@@ -683,7 +502,7 @@ class TestCmdNextOutput:
         _patch_common(
             monkeypatch,
             state={
-                "findings": {},
+                "issues": {},
                 "dimension_scores": {},
                 "overall_score": 94.0,
                 "objective_score": 98.0,
@@ -700,8 +519,6 @@ class TestCmdNextOutput:
                     {
                         "id": "subjective::naming_quality",
                         "kind": "subjective_dimension",
-                        "tier": 4,
-                        "effective_tier": 4,
                         "confidence": "medium",
                         "detector": "subjective_assessment",
                         "file": ".",
@@ -713,11 +530,6 @@ class TestCmdNextOutput:
                     }
                 ],
                 "total": 1,
-                "tier_counts": {1: 0, 2: 0, 3: 0, 4: 1},
-                "requested_tier": None,
-                "selected_tier": None,
-                "fallback_reason": None,
-                "available_tiers": [4],
             },
         )
 
@@ -733,28 +545,28 @@ class TestLowSubjectiveDimensions:
                 "score": 82,
                 "strict": 82,
                 "tier": 3,
-                "issues": 1,
+                "failing": 1,
                 "detectors": {},
             },
             "Naming quality": {
                 "score": 94.0,
                 "strict": 94.0,
                 "tier": 4,
-                "issues": 2,
+                "failing": 2,
                 "detectors": {"subjective_assessment": {}},
             },
             "Logic clarity": {
                 "score": 96.0,
                 "strict": 96.0,
                 "tier": 4,
-                "issues": 3,
+                "failing": 3,
                 "detectors": {"subjective_assessment": {}},
             },
             "Custom Subjective": {
                 "score": 91.0,
                 "strict": 91.0,
                 "tier": 4,
-                "issues": 1,
+                "failing": 1,
                 "detectors": {"subjective_assessment": {}},
             },
         }

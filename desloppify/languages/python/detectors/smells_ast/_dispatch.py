@@ -22,6 +22,7 @@ from desloppify.languages.python.detectors.smells_ast._tree_context_detectors im
 from desloppify.languages.python.detectors.smells_ast._tree_quality_detectors import (
     _detect_annotation_quality,
     _detect_constant_return,
+    _detect_del_param,
     _detect_noop_function,
     _detect_optional_param_sprawl,
     _detect_unreachable_code,
@@ -188,10 +189,16 @@ TREE_DETECTORS: tuple[_TreeDetectorSpec, ...] = (
             filepath, tree, all_nodes=all_nodes
         ),
     ),
+    _TreeDetectorSpec(
+        "del_param",
+        lambda filepath, tree, all_nodes: _detect_del_param(
+            filepath, tree, all_nodes=all_nodes
+        ),
+    ),
 )
 
 
-def _detect_ast_smells(filepath: str, content: str, smell_counts: dict[str, list]):
+def detect_ast_smells(filepath: str, content: str, smell_counts: dict[str, list]):
     """Detect AST-based code smells using registry-driven collector dispatch."""
     try:
         tree = ast.parse(content, filename=filepath)

@@ -6,7 +6,9 @@ import os
 import re
 from pathlib import Path
 
-from desloppify.core._internal.text_utils import PROJECT_ROOT, strip_c_style_comments
+from desloppify.base.discovery.paths import get_project_root
+
+from desloppify.base.text_utils import strip_c_style_comments
 from desloppify.languages.dart.pubspec import read_package_name
 
 _DART_LOGIC_RE = re.compile(
@@ -31,7 +33,7 @@ def _find_pubspec_root(path: Path) -> Path:
     for candidate in (cursor, *cursor.parents):
         if (candidate / "pubspec.yaml").is_file():
             return candidate
-    return PROJECT_ROOT
+    return get_project_root()
 
 
 def _candidate_matches(candidate: Path, production_files: set[str]) -> str | None:
@@ -43,7 +45,7 @@ def _candidate_matches(candidate: Path, production_files: set[str]) -> str | Non
         if probe_str in production_files:
             return probe_str
         try:
-            rel_probe = str(probe.relative_to(PROJECT_ROOT))
+            rel_probe = str(probe.relative_to(get_project_root()))
         except ValueError:
             rel_probe = None
         if rel_probe and rel_probe in production_files:

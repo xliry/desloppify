@@ -10,11 +10,18 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from desloppify.core.discovery_api import read_file_text, rel
+from desloppify.base.discovery.file_paths import rel
+
+from desloppify.base.discovery.source import read_file_text
 from desloppify.intelligence.review.context import (
     abs_path,
     dep_graph_lookup,
     importer_count,
+)
+from desloppify.intelligence.review.selection_cache import (
+    count_fresh,
+    count_stale,
+    get_file_issues,
 )
 from desloppify.languages import get_lang
 
@@ -112,7 +119,7 @@ def select_files_for_review(
 def _compute_review_priority(filepath: str, lang, state: dict) -> int:
     """Higher = more important to review.
 
-    Prioritizes implementation files with high blast radius and existing findings.
+    Prioritizes implementation files with high blast radius and existing issues.
     Deprioritizes types/constants files (low subjective review value).
     """
     score = 0
@@ -137,18 +144,18 @@ def _compute_review_priority(filepath: str, lang, state: dict) -> int:
         else:
             score += ic * 10
 
-    # Already has programmatic findings (compound value — review will be richer)
-    findings = state.get("findings", {})
-    n_findings = sum(
-        1 for f in findings.values() if f.get("file") == rpath and f["status"] == "open"
+    # Already has programmatic issues (compound value — review will be richer)
+    issues = state.get("issues", {})
+    n_issues = sum(
+        1 for f in issues.values() if f.get("file") == rpath and f["status"] == "open"
     )
-    score += n_findings * 5
+    score += n_issues * 5
 
-    # High-complexity files with wontfixed structural findings
+    # High-complexity files with wontfixed structural issues
     # (mechanical detector says "complex" but can't say why — subjective review can)
     n_wontfix_structural = sum(
         1
-        for f in findings.values()
+        for f in issues.values()
         if f.get("file") == rpath
         and f["status"] == "wontfix"
         and f.get("detector") in ("structural", "smells")
@@ -200,52 +207,13 @@ def is_low_value_file(filepath: str, lang_or_name=None) -> bool:
     return bool(pattern.search(filepath))
 
 
-def get_file_findings(state: dict, filepath: str) -> list[dict]:
-    """Get existing open findings for a file (summaries for context)."""
-    rpath = rel(filepath)
-    findings = state.get("findings", {})
-    return [
-        {"detector": f["detector"], "summary": f["summary"], "id": f["id"]}
-        for f in findings.values()
-        if f.get("file") == rpath and f["status"] == "open"
-    ]
-
-
-def count_fresh(state: dict, max_age_days: int) -> int:
-    """Count files in review cache that are still fresh."""
-    cache = state.get("review_cache", {}).get("files", {})
-    now = datetime.now(UTC)
-    count = 0
-    for entry in cache.values():
-        reviewed_at = entry.get("reviewed_at", "")
-        if reviewed_at:
-            try:
-                reviewed = datetime.fromisoformat(reviewed_at)
-                if (now - reviewed).days <= max_age_days:
-                    count += 1
-            except (ValueError, TypeError) as exc:
-                logger.debug(
-                    "Invalid review cache date %r while counting fresh files: %s",
-                    reviewed_at,
-                    exc,
-                )
-    return count
-
-
-def count_stale(state: dict, max_age_days: int) -> int:
-    """Count files in review cache that are stale."""
-    cache = state.get("review_cache", {}).get("files", {})
-    total = len(cache)
-    return total - count_fresh(state, max_age_days)
-
-
 __all__ = [
     "LOW_VALUE_NAMES",
     "MIN_REVIEW_LOC",
     "ReviewSelectionOptions",
     "count_fresh",
     "count_stale",
-    "get_file_findings",
+    "get_file_issues",
     "hash_file",
     "is_low_value_file",
     "low_value_pattern",

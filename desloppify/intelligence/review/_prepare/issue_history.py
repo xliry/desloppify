@@ -7,8 +7,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-_RESOLVED_STATUSES = {"fixed", "auto_resolved", "wontfix", "false_positive"}
-_KNOWN_STATUSES = ("open", "fixed", "auto_resolved", "wontfix", "false_positive")
+from desloppify.base.enums import issue_status_tokens, resolved_statuses
+from desloppify.engine._state.schema import StateModel
+
+_RESOLVED_STATUSES = resolved_statuses()
+_KNOWN_STATUSES = tuple(sorted(issue_status_tokens()))
 _AUTO_RESOLVE_NOTE = "not reported in latest holistic re-import"
 
 
@@ -44,16 +47,16 @@ def _timestamp_sort_key(value: object) -> tuple[int, str]:
         return (1, raw)
 
 
-def _finding_dimension(finding: dict[str, Any]) -> str:
-    detail = finding.get("detail")
+def _issue_dimension(issue: dict[str, Any]) -> str:
+    detail = issue.get("detail")
     if not isinstance(detail, dict):
         return "unknown"
     dimension = str(detail.get("dimension", "")).strip()
     return dimension or "unknown"
 
 
-def _related_files(finding: dict[str, Any], *, limit: int = 6) -> list[str]:
-    detail = finding.get("detail")
+def _related_files(issue: dict[str, Any], *, limit: int = 6) -> list[str]:
+    detail = issue.get("detail")
     if not isinstance(detail, dict):
         return []
     raw = detail.get("related_files")
@@ -72,12 +75,12 @@ def _related_files(finding: dict[str, Any], *, limit: int = 6) -> list[str]:
     return out
 
 
-def _iter_review_findings(state: dict[str, Any]) -> list[dict[str, Any]]:
-    findings = state.get("findings")
-    if not isinstance(findings, dict):
+def _iter_review_issues(state: StateModel) -> list[dict[str, Any]]:
+    issues = state.get("issues")
+    if not isinstance(issues, dict):
         return []
     out: list[dict[str, Any]] = []
-    for raw in findings.values():
+    for raw in issues.values():
         if not isinstance(raw, dict):
             continue
         if str(raw.get("detector", "")).strip() != "review":
@@ -86,49 +89,49 @@ def _iter_review_findings(state: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
-def _meaningful_note(finding: dict[str, Any]) -> str:
+def _meaningful_note(issue: dict[str, Any]) -> str:
     """Return the note if it's a real human-written note, not an auto-resolve boilerplate."""
-    raw = str(finding.get("note", "") or "").strip()
+    raw = str(issue.get("note", "") or "").strip()
     if not raw or raw == _AUTO_RESOLVE_NOTE:
         return ""
     return raw
 
 
-def _shape_finding(finding: dict[str, Any]) -> dict[str, Any]:
-    """Shape a single finding into the payload format for the reviewer."""
-    detail = finding.get("detail") or {}
+def _shape_issue(issue: dict[str, Any]) -> dict[str, Any]:
+    """Shape a single issue into the payload format for the reviewer."""
+    detail = issue.get("detail") or {}
     return {
-        "dimension": _finding_dimension(finding),
-        "status": str(finding.get("status", "open")).strip() or "open",
-        "summary": _trim(finding.get("summary", ""), limit=200),
+        "dimension": _issue_dimension(issue),
+        "status": str(issue.get("status", "open")).strip() or "open",
+        "summary": _trim(issue.get("summary", ""), limit=200),
         "suggestion": _trim(detail.get("suggestion", ""), limit=200),
-        "related_files": _related_files(finding),
-        "note": _meaningful_note(finding),
-        "confidence": str(finding.get("confidence", "")).strip(),
-        "first_seen": str(finding.get("first_seen", "")).strip(),
-        "last_seen": str(finding.get("last_seen", "")).strip(),
+        "related_files": _related_files(issue),
+        "note": _meaningful_note(issue),
+        "confidence": str(issue.get("confidence", "")).strip(),
+        "first_seen": str(issue.get("first_seen", "")).strip(),
+        "last_seen": str(issue.get("last_seen", "")).strip(),
     }
 
 
 def build_issue_history_context(
-    state: dict[str, Any],
+    state: StateModel,
     *,
     options: ReviewHistoryOptions | None = None,
 ) -> dict[str, Any]:
     """Build flat issue-history context for retrospective subjective review.
 
-    Returns the most recent review findings as a flat list, each with its
+    Returns the most recent review issues as a flat list, each with its
     status, summary, suggestion, related files, and any human-written note.
     """
     resolved_options = options or ReviewHistoryOptions()
     max_issues = _normalize_int(resolved_options.max_issues, default=30)
 
-    review_findings = _iter_review_findings(state)
-    if not review_findings:
+    review_issues = _iter_review_issues(state)
+    if not review_issues:
         return {
             "summary": {
-                "total_review_findings": 0,
-                "open_review_findings": 0,
+                "total_review_issues": 0,
+                "open_review_issues": 0,
                 "status_counts": {status: 0 for status in _KNOWN_STATUSES},
                 "dimension_open_counts": {},
             },
@@ -138,25 +141,25 @@ def build_issue_history_context(
     status_counts: Counter[str] = Counter()
     dimension_open_counts: Counter[str] = Counter()
 
-    for finding in review_findings:
-        status = str(finding.get("status", "open")).strip() or "open"
+    for issue in review_issues:
+        status = str(issue.get("status", "open")).strip() or "open"
         status_counts[status] += 1
         if status == "open":
-            dimension_open_counts[_finding_dimension(finding)] += 1
+            dimension_open_counts[_issue_dimension(issue)] += 1
 
     # Sort by last_seen descending, take the most recent N.
-    sorted_findings = sorted(
-        review_findings,
+    sorted_issues = sorted(
+        review_issues,
         key=lambda f: _timestamp_sort_key(f.get("last_seen")),
         reverse=True,
     )
 
-    recent_issues = [_shape_finding(f) for f in sorted_findings[:max_issues]]
+    recent_issues = [_shape_issue(f) for f in sorted_issues[:max_issues]]
 
     return {
         "summary": {
-            "total_review_findings": len(review_findings),
-            "open_review_findings": int(status_counts.get("open", 0)),
+            "total_review_issues": len(review_issues),
+            "open_review_issues": int(status_counts.get("open", 0)),
             "status_counts": {
                 status: int(status_counts.get(status, 0)) for status in _KNOWN_STATUSES
             },

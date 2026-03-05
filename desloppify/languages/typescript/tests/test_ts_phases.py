@@ -68,11 +68,11 @@ def test_phase_structural_uses_lang_thresholds(monkeypatch, tmp_path: Path):
     )
 
     lang = _FakeLang()
-    findings, potentials = phases._phase_structural(tmp_path, lang)
+    issues, potentials = phases.phase_structural(tmp_path, lang)
 
-    # Findings should be empty since all detectors return empty lists
-    assert findings == []
-    assert isinstance(findings, list)
+    # Issues should be empty since all detectors return empty lists
+    assert issues == []
+    assert isinstance(issues, list)
 
     # Potentials dict structure
     assert isinstance(potentials, dict)
@@ -116,7 +116,7 @@ def test_phase_coupling_passes_orphaned_options(monkeypatch, tmp_path: Path):
         ),
     )
     monkeypatch.setattr(
-        "desloppify.languages.typescript.phases._make_boundary_findings",
+        "desloppify.languages.typescript.phases._make_boundary_issues",
         lambda single_entries, path, graph, lang, shared_prefix, tools_prefix: ([], 0),
     )
     monkeypatch.setattr(
@@ -147,11 +147,11 @@ def test_phase_coupling_passes_orphaned_options(monkeypatch, tmp_path: Path):
     )
 
     lang = _FakeCouplingLang()
-    findings, potentials = phases._phase_coupling(tmp_path, lang)
+    issues, potentials = phases.phase_coupling(tmp_path, lang)
 
-    # Findings should be empty since all detectors return empty lists
-    assert findings == []
-    assert isinstance(findings, list)
+    # Issues should be empty since all detectors return empty lists
+    assert issues == []
+    assert isinstance(issues, list)
 
     # Potentials dict should contain all expected coupling dimension keys
     assert isinstance(potentials, dict)

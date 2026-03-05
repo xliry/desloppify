@@ -1,39 +1,35 @@
-"""Public state API facade.
-
-State internals live in `desloppify.engine._state`; this module exposes the
-stable, non-private API used by commands, review flows, and language phases.
-"""
+"""State helpers and shared state exports for runtime modules."""
 
 from typing import NamedTuple
 
 from desloppify.engine._state.filtering import (
     add_ignore,
-    finding_in_scan_scope,
     is_ignored,
-    make_finding,
+    issue_in_scan_scope,
+    make_issue,
     open_scope_breakdown,
-    path_scoped_findings,
-    remove_ignored_findings,
+    path_scoped_issues,
+    remove_ignored_issues,
 )
 from desloppify.engine._state.merge import (
     MergeScanOptions,
     find_suspect_detectors,
     merge_scan,
-    upsert_findings,
+    upsert_issues,
 )
 from desloppify.engine._state.noise import (
-    DEFAULT_FINDING_NOISE_BUDGET,
-    DEFAULT_FINDING_NOISE_GLOBAL_BUDGET,
-    apply_finding_noise_budget,
-    resolve_finding_noise_budget,
-    resolve_finding_noise_global_budget,
-    resolve_finding_noise_settings,
+    DEFAULT_ISSUE_NOISE_BUDGET,
+    DEFAULT_ISSUE_NOISE_GLOBAL_BUDGET,
+    apply_issue_noise_budget,
+    resolve_issue_noise_budget,
+    resolve_issue_noise_global_budget,
+    resolve_issue_noise_settings,
 )
 from desloppify.engine._state.persistence import load_state, save_state
 from desloppify.engine._state.resolution import (
     coerce_assessment_score,
-    match_findings,
-    resolve_findings,
+    match_issues,
+    resolve_issues,
 )
 from desloppify.engine._state.schema import (
     CURRENT_VERSION,
@@ -41,20 +37,23 @@ from desloppify.engine._state.schema import (
     STATE_FILE,
     ConcernDismissal,
     DimensionScore,
-    Finding,
+    Issue,
     StateModel,
     StateStats,
     SubjectiveAssessment,
     SubjectiveIntegrity,
     empty_state,
     ensure_state_defaults,
+    json_default,
+    migrate_state_keys,
+    utc_now,
+    validate_state_invariants,
+)
+from desloppify.engine._state.schema_scores import (
     get_objective_score,
     get_overall_score,
     get_strict_score,
     get_verified_strict_score,
-    json_default,
-    utc_now,
-    validate_state_invariants,
 )
 from desloppify.engine._state.scoring import (
     suppression_metrics,
@@ -84,7 +83,7 @@ __all__ = [
     # Types
     "ConcernDismissal",
     "DimensionScore",
-    "Finding",
+    "Issue",
     "MergeScanOptions",
     "ScoreSnapshot",
     "StateModel",
@@ -93,39 +92,36 @@ __all__ = [
     "SubjectiveIntegrity",
     # Constants
     "CURRENT_VERSION",
-    "DEFAULT_FINDING_NOISE_BUDGET",
-    "DEFAULT_FINDING_NOISE_GLOBAL_BUDGET",
+    "DEFAULT_ISSUE_NOISE_BUDGET",
+    "DEFAULT_ISSUE_NOISE_GLOBAL_BUDGET",
     "STATE_DIR",
     "STATE_FILE",
     # Functions
     "add_ignore",
-    "apply_finding_noise_budget",
+    "apply_issue_noise_budget",
     "coerce_assessment_score",
     "empty_state",
     "ensure_state_defaults",
     "find_suspect_detectors",
-    "finding_in_scan_scope",
-    "get_objective_score",
-    "get_overall_score",
+    "issue_in_scan_scope",
     "open_scope_breakdown",
-    "get_strict_score",
-    "get_verified_strict_score",
     "is_ignored",
     "json_default",
     "load_state",
-    "make_finding",
-    "match_findings",
+    "make_issue",
+    "match_issues",
     "merge_scan",
-    "path_scoped_findings",
-    "remove_ignored_findings",
-    "resolve_finding_noise_budget",
-    "resolve_finding_noise_global_budget",
-    "resolve_finding_noise_settings",
-    "resolve_findings",
+    "path_scoped_issues",
+    "remove_ignored_issues",
+    "resolve_issue_noise_budget",
+    "resolve_issue_noise_global_budget",
+    "resolve_issue_noise_settings",
+    "resolve_issues",
     "save_state",
     "score_snapshot",
     "suppression_metrics",
-    "upsert_findings",
+    "upsert_issues",
     "utc_now",
     "validate_state_invariants",
+    "migrate_state_keys",
 ]

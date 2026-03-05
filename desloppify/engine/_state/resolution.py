@@ -6,11 +6,11 @@ import copy
 
 __all__ = [
     "coerce_assessment_score",
-    "match_findings",
-    "resolve_findings",
+    "match_issues",
+    "resolve_issues",
 ]
 
-from desloppify.core._internal.text_utils import is_numeric
+from desloppify.base.text_utils import is_numeric
 from desloppify.engine._state.filtering import _matches_pattern
 from desloppify.engine._state.schema import (
     StateModel,
@@ -18,7 +18,9 @@ from desloppify.engine._state.schema import (
     utc_now,
     validate_state_invariants,
 )
-from desloppify.engine._state.scoring import _recompute_stats
+
+
+from desloppify.engine._state import _recompute_stats
 
 
 def coerce_assessment_score(value: object) -> float | None:
@@ -41,10 +43,10 @@ def _mark_stale_assessments_on_review_resolve(
     state: StateModel,
     *,
     status: str,
-    resolved_findings: list[dict],
+    resolved_issues: list[dict],
     now: str,
 ) -> None:
-    """Mark subjective assessments as stale when review findings are resolved.
+    """Mark subjective assessments as stale when review issues are resolved.
 
     The assessment score is preserved (not zeroed) — only a fresh review import
     should change dimension scores.  The stale marker tells the UI to prompt
@@ -55,10 +57,10 @@ def _mark_stale_assessments_on_review_resolve(
         return
 
     touched_dimensions: set[str] = set()
-    for finding in resolved_findings:
-        if finding.get("detector") != "review":
+    for issue in resolved_issues:
+        if issue.get("detector") != "review":
             continue
-        dimension = str(finding.get("detail", {}).get("dimension", "")).strip()
+        dimension = str(issue.get("detail", {}).get("dimension", "")).strip()
         if dimension:
             touched_dimensions.add(dimension)
 
@@ -69,46 +71,46 @@ def _mark_stale_assessments_on_review_resolve(
         payload = assessments.get(dimension)
         if isinstance(payload, dict):
             payload["needs_review_refresh"] = True
-            payload["refresh_reason"] = f"review_finding_{status}"
+            payload["refresh_reason"] = f"review_issue_{status}"
             payload["stale_since"] = now
         else:
             assessments[dimension] = {
                 "score": coerce_assessment_score(payload) or 0.0,
                 "needs_review_refresh": True,
-                "refresh_reason": f"review_finding_{status}",
+                "refresh_reason": f"review_issue_{status}",
                 "stale_since": now,
             }
 
 
-def match_findings(
+def match_issues(
     state: StateModel, pattern: str, status_filter: str = "open"
 ) -> list[dict]:
-    """Return findings matching *pattern* with the given status."""
+    """Return issues matching *pattern* with the given status."""
     ensure_state_defaults(state)
     return [
-        finding
-        for finding_id, finding in state["findings"].items()
-        if not finding.get("suppressed")
-        if (status_filter == "all" or finding["status"] == status_filter)
-        and _matches_pattern(finding_id, finding, pattern)
+        issue
+        for issue_id, issue in state["issues"].items()
+        if not issue.get("suppressed")
+        if (status_filter == "all" or issue["status"] == status_filter)
+        and _matches_pattern(issue_id, issue, pattern)
     ]
 
 
-def resolve_findings(
+def resolve_issues(
     state: StateModel,
     pattern: str,
     status: str,
     note: str | None = None,
     attestation: str | None = None,
 ) -> list[str]:
-    """Set finding status for matches and return affected finding IDs."""
+    """Set issue status for matches and return affected issue IDs."""
     ensure_state_defaults(state)
     now = utc_now()
     resolved: list[str] = []
-    resolved_findings: list[dict] = []
+    resolved_issues: list[dict] = []
     status_filter = "all" if status == "open" else "open"
-    for finding in match_findings(state, pattern, status_filter=status_filter):
-        previous_status = str(finding.get("status", "open")).strip() or "open"
+    for issue in match_issues(state, pattern, status_filter=status_filter):
+        previous_status = str(issue.get("status", "open")).strip() or "open"
         if status == "open" and previous_status == "open":
             continue
 
@@ -119,25 +121,26 @@ def resolve_findings(
             extra_updates["wontfix_snapshot"] = {
                 "captured_at": now,
                 "scan_count": snapshot_scan_count,
-                "tier": finding.get("tier"),
-                "confidence": finding.get("confidence"),
-                "detail": copy.deepcopy(finding.get("detail", {})),
+                "tier": issue.get("tier"),
+                "confidence": issue.get("confidence"),
+                "detail": copy.deepcopy(issue.get("detail", {})),
             }
         if status == "open":
-            finding["reopen_count"] = int(finding.get("reopen_count", 0) or 0) + 1
-            finding.pop("wontfix_scan_count", None)
-            finding.pop("wontfix_snapshot", None)
-            previous_note = finding.get("note")
+            issue["reopen_count"] = int(issue.get("reopen_count", 0) or 0) + 1
+            issue.pop("wontfix_scan_count", None)
+            issue.pop("wontfix_snapshot", None)
+            previous_note = issue.get("note")
             next_note = note if note is not None else previous_note
             extra_updates["resolved_at"] = None
             extra_updates["note"] = next_note
-            extra_updates["resolution_attestation"] = {
+            reopen_attestation = {
                 "kind": "manual_reopen",
                 "text": attestation or note,
                 "attested_at": now,
                 "scan_verified": False,
-                "previous_status": previous_status,
             }
+            reopen_attestation["previous_status"] = previous_status
+            extra_updates["resolution_attestation"] = reopen_attestation
 
         updates: dict[str, object] = {
             "status": status,
@@ -154,14 +157,14 @@ def resolve_findings(
             },
         }
         updates.update(extra_updates)
-        finding.update(updates)
-        resolved.append(finding["id"])
-        resolved_findings.append(finding)
+        issue.update(updates)
+        resolved.append(issue["id"])
+        resolved_issues.append(issue)
 
     _mark_stale_assessments_on_review_resolve(
         state,
         status=status,
-        resolved_findings=resolved_findings,
+        resolved_issues=resolved_issues,
         now=now,
     )
 

@@ -14,7 +14,9 @@ import ast
 import os
 from pathlib import Path
 
-from desloppify.core.discovery_api import read_file_text, rel
+from desloppify.base.discovery.file_paths import rel
+
+from desloppify.base.discovery.source import read_file_text
 
 # Entry-point files where unused private functions are expected.
 # Subset of PY_ENTRY_PATTERNS from phases.py (can't import — circular).
@@ -67,14 +69,7 @@ def detect_uncalled_functions(
     path: Path,
     graph: dict,
 ) -> tuple[list[dict], int]:
-    """Find underscore-prefixed top-level functions with zero references.
-
-    Single-pass: walks every file's AST once, collecting both references
-    (Name, Attribute, import aliases) and function-definition candidates.
-
-    Returns:
-        (entries, total_candidates) — entries are dicts with file/name/line/loc.
-    """
+    """Find underscore-prefixed top-level functions with zero references."""
     project_files = [f for f in graph if f.endswith(".py")]
     if not project_files:
         return [], 0
@@ -89,7 +84,8 @@ def detect_uncalled_functions(
             continue
         try:
             tree = ast.parse(content, filename=filepath)
-        except SyntaxError:
+        except SyntaxError as exc:
+            _ = exc
             continue
 
         # Collect all references from this file

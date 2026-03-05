@@ -22,3 +22,8 @@ generic_lang(
     default_src="src",
     treesitter_spec=JS_SPEC,
 )
+
+__all__ = [
+    "generic_lang",
+    "JS_SPEC",
+]

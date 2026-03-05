@@ -8,27 +8,30 @@ from desloppify.app.cli_support.parser_groups_admin import (  # noqa: F401 (re-e
     _add_config_parser,
     _add_detect_parser,
     _add_dev_parser,
-    _add_fix_parser,
+    _add_autofix_parser,
     _add_langs_parser,
     _add_move_parser,
-    _add_plan_parser,
     _add_review_parser,
     _add_update_skill_parser,
     _add_viz_parser,
     _add_zone_parser,
 )
+from desloppify.app.cli_support.parser_groups_plan_impl import add_plan_parser
+from desloppify.base.enums import issue_status_tokens
+
+_STATUS_CHOICES = sorted(issue_status_tokens(include_all=True))
 
 __all__ = [
     "_add_config_parser",
     "_add_detect_parser",
     "_add_dev_parser",
     "_add_exclude_parser",
-    "_add_fix_parser",
-    "_add_ignore_parser",
+    "_add_autofix_parser",
+    "_add_suppress_parser",
     "_add_langs_parser",
     "_add_move_parser",
     "_add_next_parser",
-    "_add_plan_parser",
+    "add_plan_parser",
     "_add_review_parser",
     "_add_scan_parser",
     "_add_show_parser",
@@ -93,27 +96,23 @@ examples:
         help="Language runtime option override (repeatable, e.g. --lang-opt roslyn_cmd='dotnet run ...')",
     )
     p_scan.add_argument(
-        "--by-language",
+        "--force-rescan",
         action="store_true",
-        default=False,
-        help=(
-            "Generate per-language score sections and scorecard images "
-            "(e.g. scorecard-go.png, scorecard-python.png). "
-            "Requires >=2 detected languages."
-        ),
+        help="Bypass queue completion check (requires --attest)",
+    )
+    p_scan.add_argument(
+        "--attest",
+        type=str,
+        default=None,
+        metavar="TEXT",
+        help="Attestation for --force-rescan",
     )
 
 
 def _add_status_parser(sub) -> None:
-    p_status = sub.add_parser("status", help="Score dashboard with per-tier progress")
+    p_status = sub.add_parser("status", help="Full project dashboard: score, dimensions, progress, coaching")
     p_status.add_argument("--state", type=str, default=None, help="Path to state file")
     p_status.add_argument("--json", action="store_true", help="Output as JSON")
-    p_status.add_argument(
-        "--by-language",
-        action="store_true",
-        default=False,
-        help="Show per-language score breakdown (requires a prior --by-language scan).",
-    )
 
 
 def _add_tree_parser(sub) -> None:
@@ -131,18 +130,18 @@ def _add_tree_parser(sub) -> None:
         "--min-loc", type=int, default=0, help="Hide items below this LOC"
     )
     p_tree.add_argument(
-        "--sort", choices=["loc", "findings", "coupling"], default="loc",
+        "--sort", choices=["loc", "issues", "coupling"], default="loc",
         help="Sort order (default: loc)",
     )
     p_tree.add_argument(
-        "--detail", action="store_true", help="Show finding summaries per file"
+        "--detail", action="store_true", help="Show issue summaries per file"
     )
 
 
 def _add_show_parser(sub) -> None:
     p_show = sub.add_parser(
         "show",
-        help="Dig into findings by file, directory, detector, or ID",
+        help="Dig into issues by file, directory, detector, or ID",
         epilog="""\
 examples:
   desloppify show src/components/Modal.tsx
@@ -155,12 +154,12 @@ examples:
         "pattern",
         nargs="?",
         default=None,
-        help="File path, directory, detector name, finding ID, or glob",
+        help="File path, directory, detector name, issue ID, or glob",
     )
     p_show.add_argument("--state", type=str, default=None, help="Path to state file")
     p_show.add_argument(
         "--status",
-        choices=["open", "fixed", "wontfix", "false_positive", "auto_resolved", "all"],
+        choices=_STATUS_CHOICES,
         default="open",
         help="Filter by status (default: open)",
     )
@@ -176,41 +175,39 @@ examples:
     p_show.add_argument(
         "--chronic",
         action="store_true",
-        help="Show findings that have been reopened 2+ times (chronic reopeners)",
+        help="Show issues that have been reopened 2+ times (chronic reopeners)",
     )
     p_show.add_argument(
-        "--code", action="store_true", help="Show inline code snippets for each finding"
+        "--code", action="store_true", help="Show inline code snippets for each issue"
     )
     p_show.add_argument(
         "--notes",
         type=str,
         default=None,
         metavar="FILE",
-        help="Path to investigation notes file to attach to a finding",
+        help="Path to investigation notes file to attach to a issue",
+    )
+    p_show.add_argument(
+        "--no-budget",
+        action="store_true",
+        dest="no_budget",
+        help="Bypass per-detector noise budget (show all matching issues)",
     )
 
 
 def _add_next_parser(sub) -> None:
     p_next = sub.add_parser(
         "next",
-        help="Show next highest-priority open finding",
+        help="Show next highest-priority open issue",
         epilog="""\
-tiers (highest to lowest priority):
-  T1  critical    security issues, data loss risks
-  T2  important   bugs, correctness, major smells
-  T3  moderate    code quality, duplication, dead code
-  T4  cosmetic    style, subjective review dimensions
-
 examples:
   desloppify next                       # single highest-priority item
   desloppify next --count 10            # top 10 items
-  desloppify next --tier 1              # only tier 1
   desloppify next --group file          # group by file
   desloppify next --cluster my-cluster  # items in a cluster""",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p_next.add_argument("--state", type=str, default=None, help="Path to state file")
-    p_next.add_argument("--tier", type=int, choices=[1, 2, 3, 4], default=None, help="Show only this tier")
     p_next.add_argument(
         "--count", type=int, default=1, help="Number of items to show (default: 1)"
     )
@@ -222,15 +219,15 @@ examples:
     )
     p_next.add_argument(
         "--status",
-        choices=["open", "fixed", "wontfix", "false_positive", "auto_resolved", "all"],
+        choices=_STATUS_CHOICES,
         default="open",
         help="Status filter for queue items (default: open)",
     )
     p_next.add_argument(
         "--group",
-        choices=["item", "file", "detector", "tier"],
+        choices=["item", "file", "detector"],
         default="item",
-        help="Group output by item, file, detector, or tier",
+        help="Group output by item, file, or detector",
     )
     p_next.add_argument(
         "--format",
@@ -241,12 +238,7 @@ examples:
     p_next.add_argument(
         "--explain",
         action="store_true",
-        help="Show ranking and tier-fallback rationale",
-    )
-    p_next.add_argument(
-        "--no-tier-fallback",
-        action="store_true",
-        help="Do not auto-fallback to another tier when --tier has no items",
+        help="Show ranking rationale",
     )
     p_next.add_argument(
         "--cluster",
@@ -268,12 +260,12 @@ examples:
     )
 
 
-def _add_ignore_parser(sub) -> None:
-    p_ignore = sub.add_parser(
-        "ignore", help="Add pattern to ignore list, remove matching findings"
+def _add_suppress_parser(sub) -> None:
+    p_suppress = sub.add_parser(
+        "suppress", help="Permanently silence issues matching a pattern (false positives / accepted debt)"
     )
-    p_ignore.add_argument("pattern", help="File path, glob, or detector::prefix")
-    p_ignore.add_argument(
+    p_suppress.add_argument("pattern", help="File path, glob, or detector::prefix")
+    p_suppress.add_argument(
         "--attest",
         type=str,
         default=None,
@@ -283,11 +275,11 @@ def _add_ignore_parser(sub) -> None:
             '--attest "I have actually [DESCRIBE THE CONCRETE CHANGE YOU MADE] and I am not gaming the score by resolving without fixing."'
         ),
     )
-    p_ignore.add_argument("--state", type=str, default=None, help="Path to state file")
+    p_suppress.add_argument("--state", type=str, default=None, help="Path to state file")
 
 
 def _add_exclude_parser(sub) -> None:
     p_exclude = sub.add_parser(
-        "exclude", help="Add path pattern to exclude list"
+        "exclude", help="Exclude paths from scanning entirely"
     )
     p_exclude.add_argument("pattern", help="Path pattern to exclude from scanning")

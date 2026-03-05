@@ -2,6 +2,7 @@
 __pycache__/
 *.egg-info/
 .desloppify/
+.desloppify.*/
 .venv/
 build/
 dist/
@@ -36,3 +37,4 @@ pytest-full.xml
 /.claude/skills/
 /.agents/skills/
 /skills/
+.claude/worktrees/

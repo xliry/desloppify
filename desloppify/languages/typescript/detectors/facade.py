@@ -45,14 +45,11 @@ def is_ts_facade(filepath: str) -> dict | None:
 
 def detect_reexport_facades(
     graph: dict,
-    *,
-    max_importers: int = 2,
 ) -> tuple[list[dict], int]:
     """Detect TypeScript re-export facade files."""
     entries, total_checked = detect_reexport_facades_common(
         graph,
         is_facade_fn=is_ts_facade,
-        max_importers=max_importers,
     )
 
     return sorted(

@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from .common import apply_fixer, process_unused_import_lines
+from desloppify.languages._framework.base.types import FixResult
+
+from .fixer_io import apply_fixer
+from .import_rewrite import process_unused_import_lines
 
 
-def fix_unused_imports(entries: list[dict], *, dry_run: bool = False) -> list[dict]:
+def fix_unused_imports(entries: list[dict], *, dry_run: bool = False) -> FixResult:
     """Remove unused imports from source files."""
     import_entries = [entry for entry in entries if entry.get("category") == "imports"]
 
@@ -28,7 +31,7 @@ def fix_unused_imports(entries: list[dict], *, dry_run: bool = False) -> list[di
                 removed.append(name)
         return new_lines, removed
 
-    return apply_fixer(import_entries, transform, dry_run=dry_run)
+    return FixResult(entries=apply_fixer(import_entries, transform, dry_run=dry_run))
 
 
 __all__ = ["fix_unused_imports"]

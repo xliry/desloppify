@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from desloppify.core.discovery_api import rel
-from desloppify.core.output_api import colorize
+from desloppify.app.commands.helpers.queue_progress import (
+    QueueBreakdown,
+    format_queue_headline,
+)
+from desloppify.base.discovery.file_paths import rel
+from desloppify.base.output.terminal import colorize
 
 
 def print_agent_plan(
@@ -36,13 +40,24 @@ def _print_plan_agent_block(plan: dict, *, header: str = "  AGENT PLAN:") -> Non
     """Render the living plan as the agent plan block."""
     active = plan.get("active_cluster")
     ordered = len(plan.get("queue_order", []))
-    skipped = len(plan.get("skipped", {}))
+    skipped_ids = set(plan.get("skipped", {}).keys())
+    skipped = len(skipped_ids)
+    queue_order = plan.get("queue_order", [])
+    plan_ordered = sum(1 for fid in queue_order if fid not in skipped_ids)
+
+    # Build a lightweight breakdown for the headline
+    breakdown = QueueBreakdown(
+        queue_total=ordered,
+        plan_ordered=plan_ordered,
+        skipped=skipped,
+    )
+    headline = format_queue_headline(breakdown)
 
     print(colorize(header, "yellow"))
-    print(colorize(f"  Living plan active: {ordered} ordered, {skipped} skipped.", "dim"))
+    print(colorize(f"  Living plan active: {headline}", "dim"))
     if active:
         cluster = plan.get("clusters", {}).get(active, {})
-        remaining = len(cluster.get("finding_ids", []))
+        remaining = len(cluster.get("issue_ids", []))
         print(colorize(f"  Focused on: {active} ({remaining} items remaining).", "dim"))
     print(colorize("  Next command: `desloppify next`", "dim"))
     print(colorize("  View plan: `desloppify plan`", "dim"))

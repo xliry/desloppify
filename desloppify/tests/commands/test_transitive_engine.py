@@ -3,9 +3,9 @@
 Covers:
 - desloppify.engine._state.merge (MergeScanOptions, merge_scan)
 - desloppify.intelligence.review.context_holistic.readers (_abs, _read_file_contents)
-- desloppify.app.cli_support.parser_groups_admin (parser builders, helpers)
-- desloppify.app.commands.move.move_apply (rollback, apply helpers)
-- desloppify.languages._framework.base.shared_phases (entries_to_findings, log, find_external)
+- desloppify.app.cli_support.parser_groups_admin/parser_groups (parser builders, helpers)
+- desloppify.app.commands.move.apply (rollback, apply helpers)
+- desloppify.languages._framework.base.shared_phases (entries_to_issues, log, find_external)
 """
 
 from __future__ import annotations
@@ -18,11 +18,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import desloppify.app.cli_support.parser_groups as parser_groups_mod
+
 # ── Module 3: parser_groups_admin ─────────────────────────────────────
 import desloppify.app.cli_support.parser_groups_admin as parser_admin_mod
 
 # ── Module 4: move_apply ──────────────────────────────────────────────
-import desloppify.app.commands.move.move_apply as move_apply_mod
+import desloppify.app.commands.move.apply as move_apply_mod
 
 # ── Module 1: engine._state.merge ─────────────────────────────────────
 import desloppify.engine._state.merge as merge_mod
@@ -93,7 +95,7 @@ class TestMergeScan:
 
     @patch.object(merge_mod, "_recompute_stats")
     def test_merge_empty_scan_into_empty_state(self, mock_recompute):
-        """Merging zero findings into empty state produces a clean diff."""
+        """Merging zero issues into empty state produces a clean diff."""
         mock_recompute.return_value = None
         state = self._make_state()
         diff = merge_scan(state, [], MergeScanOptions(lang="python"))
@@ -102,15 +104,15 @@ class TestMergeScan:
         assert diff["reopened"] == 0
         assert diff["total_current"] == 0
         assert diff["ignored"] == 0
-        assert diff["raw_findings"] == 0
+        assert diff["raw_issues"] == 0
         assert diff["suppressed_pct"] == 0.0
 
     @patch.object(merge_mod, "_recompute_stats")
-    def test_merge_new_findings(self, mock_recompute):
-        """New findings are counted correctly."""
+    def test_merge_new_issues(self, mock_recompute):
+        """New issues are counted correctly."""
         mock_recompute.return_value = None
         state = self._make_state()
-        findings = [
+        issues = [
             {
                 "id": "smells::foo.py::debug_tag",
                 "detector": "smells",
@@ -127,23 +129,23 @@ class TestMergeScan:
                 "reopen_count": 0,
             },
         ]
-        diff = merge_scan(state, findings, MergeScanOptions(lang="python"))
+        diff = merge_scan(state, issues, MergeScanOptions(lang="python"))
         assert diff["new"] == 1
         assert diff["total_current"] == 1
-        assert "smells::foo.py::debug_tag" in state["findings"]
+        assert "smells::foo.py::debug_tag" in state["issues"]
 
     @patch.object(merge_mod, "_recompute_stats")
     def test_merge_auto_resolves_disappeared(self, mock_recompute):
-        """Old open findings not in current scan get auto-resolved."""
+        """Old open issues not in current scan get auto-resolved."""
         mock_recompute.return_value = None
         state = self._make_state()
-        state["findings"]["smells::old.py::leftover"] = {
+        state["issues"]["smells::old.py::leftover"] = {
             "id": "smells::old.py::leftover",
             "detector": "smells",
             "file": "old.py",
             "tier": 2,
             "confidence": "high",
-            "summary": "Old finding",
+            "summary": "Old issue",
             "detail": {},
             "status": "open",
             "note": None,
@@ -157,14 +159,14 @@ class TestMergeScan:
             state, [], MergeScanOptions(lang="python", force_resolve=True)
         )
         assert diff["auto_resolved"] == 1
-        assert state["findings"]["smells::old.py::leftover"]["status"] == "auto_resolved"
+        assert state["issues"]["smells::old.py::leftover"]["status"] == "auto_resolved"
 
     @patch.object(merge_mod, "_recompute_stats")
     def test_merge_with_ignore_patterns(self, mock_recompute):
-        """Findings matching ignore patterns are suppressed but still counted."""
+        """Issues matching ignore patterns are suppressed but still counted."""
         mock_recompute.return_value = None
         state = self._make_state()
-        findings = [
+        issues = [
             {
                 "id": "smells::vendor/lib.py::debug",
                 "detector": "smells",
@@ -183,13 +185,13 @@ class TestMergeScan:
         ]
         diff = merge_scan(
             state,
-            findings,
+            issues,
             MergeScanOptions(lang="python", ignore=["vendor/*"]),
         )
         assert diff["ignored"] == 1
-        assert diff["raw_findings"] == 1
-        # Finding is inserted but suppressed:
-        f = state["findings"]["smells::vendor/lib.py::debug"]
+        assert diff["raw_issues"] == 1
+        # Issue is inserted but suppressed:
+        f = state["issues"]["smells::vendor/lib.py::debug"]
         assert f["suppressed"] is True
 
     @patch.object(merge_mod, "_recompute_stats")
@@ -268,41 +270,13 @@ class TestReaders:
 
 
 class TestDeprecatedAction:
-    """Tests for _DeprecatedAction and _DeprecatedBoolAction."""
+    """Removed deprecated parser actions stay removed."""
 
-    def test_deprecated_action_stores_value_and_warns(self, capsys):
-        parser = argparse.ArgumentParser()
-        parser.add_argument(
-            "--old-flag",
-            action=parser_admin_mod._DeprecatedAction,
-            type=int,
-        )
-        args = parser.parse_args(["--old-flag", "42"])
-        assert args.old_flag == 42
-        captured = capsys.readouterr()
-        assert "deprecated" in captured.err.lower()
-        assert "--old-flag" in captured.err
+    def test_deprecated_action_removed(self):
+        assert not hasattr(parser_admin_mod, "_DeprecatedAction")
 
-    def test_deprecated_bool_action_stores_true_and_warns(self, capsys):
-        parser = argparse.ArgumentParser()
-        parser.add_argument(
-            "--legacy-bool",
-            action=parser_admin_mod._DeprecatedBoolAction,
-        )
-        args = parser.parse_args(["--legacy-bool"])
-        assert args.legacy_bool is True
-        captured = capsys.readouterr()
-        assert "deprecated" in captured.err.lower()
-        assert "--legacy-bool" in captured.err
-
-    def test_deprecated_bool_default_is_false(self):
-        parser = argparse.ArgumentParser()
-        parser.add_argument(
-            "--legacy",
-            action=parser_admin_mod._DeprecatedBoolAction,
-        )
-        args = parser.parse_args([])
-        assert args.legacy is False
+    def test_deprecated_bool_action_removed(self):
+        assert not hasattr(parser_admin_mod, "_DeprecatedBoolAction")
 
 
 class TestDetectParser:
@@ -530,9 +504,8 @@ class TestFixerHelpLines:
         mock_get_lang.return_value = mock_lang
 
         lines = parser_admin_mod._fixer_help_lines(["python"])
-        assert len(lines) == 2  # one lang line + "special: review" line
+        assert len(lines) == 1  # one lang line
         assert "logs, unused" in lines[0]
-        assert "special: review" in lines[1]
 
     @patch("desloppify.app.cli_support.parser_groups_admin.get_lang")
     def test_fixer_help_lines_import_error(self, mock_get_lang):
@@ -540,7 +513,6 @@ class TestFixerHelpLines:
 
         lines = parser_admin_mod._fixer_help_lines(["bogus"])
         assert "none yet" in lines[0]
-        assert "special: review" in lines[1]
 
 
 class TestFixParser:
@@ -551,10 +523,10 @@ class TestFixParser:
             "desloppify.app.cli_support.parser_groups_admin.get_lang"
         ) as mock_get_lang:
             mock_get_lang.side_effect = ImportError()
-            parser_admin_mod._add_fix_parser(sub, ["python"])
+            parser_admin_mod._add_autofix_parser(sub, ["python"])
 
         args = parser.parse_args(
-            ["fix", "unused", "--path", "src", "--dry-run"]
+            ["autofix", "unused", "--path", "src", "--dry-run"]
         )
         assert args.fixer == "unused"
         assert args.path == "src"
@@ -565,7 +537,7 @@ class TestPlanAndVizParsers:
     def test_plan_parser(self):
         parser = argparse.ArgumentParser()
         sub = parser.add_subparsers(dest="command")
-        parser_admin_mod._add_plan_parser(sub)
+        parser_groups_mod.add_plan_parser(sub)
 
         args = parser.parse_args(["plan", "--output", "plan.md"])
         assert args.output == "plan.md"
@@ -655,16 +627,16 @@ class TestLangsAndUpdateSkillParsers:
 
 
 class TestRollbackWrittenFiles:
-    @patch("desloppify.app.commands.move.move_apply.restore_files_best_effort")
-    @patch("desloppify.app.commands.move.move_apply.warn_best_effort")
+    @patch("desloppify.app.commands.move.apply.restore_files_best_effort")
+    @patch("desloppify.app.commands.move.apply.warn_best_effort")
     def test_rollback_no_failures(self, mock_warn, mock_restore):
         mock_restore.return_value = []
         move_apply_mod._rollback_written_files({"a.py": "old a"})
         mock_restore.assert_called_once()
         mock_warn.assert_not_called()
 
-    @patch("desloppify.app.commands.move.move_apply.restore_files_best_effort")
-    @patch("desloppify.app.commands.move.move_apply.warn_best_effort")
+    @patch("desloppify.app.commands.move.apply.restore_files_best_effort")
+    @patch("desloppify.app.commands.move.apply.warn_best_effort")
     def test_rollback_with_failures(self, mock_warn, mock_restore):
         mock_restore.return_value = ["/bad/file.py"]
         move_apply_mod._rollback_written_files({"a.py": "old a"})
@@ -696,8 +668,8 @@ class TestRollbackMoveTarget:
         assert source.exists()
         assert source.read_text() == "moved content"
 
-    @patch("desloppify.app.commands.move.move_apply.shutil.move", side_effect=OSError("fail"))
-    @patch("desloppify.app.commands.move.move_apply.warn_best_effort")
+    @patch("desloppify.app.commands.move.apply.shutil.move", side_effect=OSError("fail"))
+    @patch("desloppify.app.commands.move.apply.warn_best_effort")
     def test_rollback_os_error_warns(self, mock_warn, mock_move, tmp_path):
         dest = tmp_path / "dest.py"
         dest.write_text("content")
@@ -806,7 +778,7 @@ class TestApplyDirectoryMove:
 # =====================================================================
 
 
-class TestEntriesToFindings:
+class TestEntriesToIssues:
     def test_basic_conversion(self):
         entries = [
             {
@@ -818,7 +790,7 @@ class TestEntriesToFindings:
                 "detail": {"line": 42},
             },
         ]
-        results = shared_phases_mod._entries_to_findings("smells", entries)
+        results = shared_phases_mod._entries_to_issues("smells", entries)
         assert len(results) == 1
         assert results[0]["detector"] == "smells"
         assert results[0]["tier"] == 2
@@ -835,7 +807,7 @@ class TestEntriesToFindings:
                 "summary": "Issue",
             },
         ]
-        results = shared_phases_mod._entries_to_findings(
+        results = shared_phases_mod._entries_to_issues(
             "test_coverage", entries, default_name="coverage_gap"
         )
         assert len(results) == 1
@@ -857,7 +829,7 @@ class TestEntriesToFindings:
             },
         ]
         zone_map = {"tests/foo.py": _FakeZone.TEST}
-        results = shared_phases_mod._entries_to_findings(
+        results = shared_phases_mod._entries_to_issues(
             "security",
             entries,
             include_zone=True,
@@ -874,7 +846,7 @@ class TestEntriesToFindings:
                 "summary": "Missing",
             },
         ]
-        results = shared_phases_mod._entries_to_findings(
+        results = shared_phases_mod._entries_to_issues(
             "security",
             entries,
             include_zone=True,
@@ -883,19 +855,19 @@ class TestEntriesToFindings:
         assert "zone" not in results[0]
 
     def test_empty_entries(self):
-        results = shared_phases_mod._entries_to_findings("smells", [])
+        results = shared_phases_mod._entries_to_issues("smells", [])
         assert results == []
 
 
 class TestLogPhaseSummary:
     @patch("desloppify.languages._framework.base.shared_phases.log")
     def test_with_results(self, mock_log):
-        fake_findings = [{"id": "a"}, {"id": "b"}]
-        shared_phases_mod._log_phase_summary("test coverage", fake_findings, 50, "production files")
+        fake_issues = [{"id": "a"}, {"id": "b"}]
+        shared_phases_mod._log_phase_summary("test coverage", fake_issues, 50, "production files")
         mock_log.assert_called_once()
         msg = mock_log.call_args[0][0]
         assert "test coverage" in msg
-        assert "2 findings" in msg
+        assert "2 issues" in msg
         assert "50 production files" in msg
 
     @patch("desloppify.languages._framework.base.shared_phases.log")

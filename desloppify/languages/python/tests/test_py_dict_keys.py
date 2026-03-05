@@ -19,14 +19,14 @@ def _write_py(tmp_path: Path, code: str, filename: str = "test_mod.py") -> Path:
     return tmp_path
 
 
-def _kinds(findings: list[dict]) -> set[str]:
-    """Extract unique finding kinds."""
-    return {f["kind"] for f in findings}
+def _kinds(issues: list[dict]) -> set[str]:
+    """Extract unique issue kinds."""
+    return {f["kind"] for f in issues}
 
 
-def _find_kind(findings: list[dict], kind: str) -> list[dict]:
-    """Filter findings by kind."""
-    return [f for f in findings if f["kind"] == kind]
+def _find_kind(issues: list[dict], kind: str) -> list[dict]:
+    """Filter issues by kind."""
+    return [f for f in issues if f["kind"] == kind]
 
 
 # ── Levenshtein / singular-plural helpers ─────────────────
@@ -152,6 +152,40 @@ class TestDeadWrite:
         entries, _ = detect_dict_key_flow(path)
         assert "dead_write" not in _kinds(entries)
 
+    def test_no_dead_write_when_assigned_into_parent_container(self, tmp_path):
+        """Dict assigned into another dict key should be treated as escaped."""
+        path = _write_py(
+            tmp_path,
+            """\
+            def stage():
+                meta = {}
+                child = {}
+                child["a"] = 1
+                child["b"] = 2
+                child["c"] = 3
+                meta["child"] = child
+                return meta
+        """,
+        )
+        entries, _ = detect_dict_key_flow(path)
+        assert "dead_write" not in _kinds(entries)
+
+    def test_no_dead_write_when_nested_in_list_return(self, tmp_path):
+        """Dict returned inside nested list/tuple structures should be escaped."""
+        path = _write_py(
+            tmp_path,
+            """\
+            def combined():
+                item = {}
+                item["a"] = 1
+                item["b"] = 2
+                item["c"] = 3
+                return [("label", item)]
+        """,
+        )
+        entries, _ = detect_dict_key_flow(path)
+        assert "dead_write" not in _kinds(entries)
+
 
 # ── Overwritten keys ──────────────────────────────────────
 
@@ -265,7 +299,7 @@ class TestDictMethods:
 
 
 class TestCleanDictUsage:
-    def test_no_findings_for_clean_code(self, tmp_path):
+    def test_no_issues_for_clean_code(self, tmp_path):
         path = _write_py(
             tmp_path,
             """\
@@ -294,7 +328,7 @@ class TestSchemaDrift:
         """)
         path = _write_py(tmp_path, code)
         entries, count = detect_schema_drift(path)
-        # The function needs at least 3 literals to produce findings
+        # The function needs at least 3 literals to produce issues
         assert count >= 3
         # "town" is the outlier — only in 1 of 3 dicts while "city" is in 2
         if entries:
@@ -310,14 +344,14 @@ class TestSchemaDrift:
         entries, _ = detect_schema_drift(path)
         assert len(entries) == 0
 
-    def test_too_few_literals_no_findings(self, tmp_path):
+    def test_too_few_literals_no_issues(self, tmp_path):
         code = textwrap.dedent("""\
             d1 = {"name": "a", "age": 1, "city": "x"}
             d2 = {"name": "b", "age": 2, "town": "y"}
         """)
         path = _write_py(tmp_path, code)
         entries, count = detect_schema_drift(path)
-        # Fewer than 3 literals -> no findings
+        # Fewer than 3 literals -> no issues
         assert len(entries) == 0
 
 
@@ -325,7 +359,7 @@ class TestSchemaDrift:
 
 
 class TestOutputStructure:
-    def test_finding_keys(self, tmp_path):
+    def test_issue_keys(self, tmp_path):
         path = _write_py(
             tmp_path,
             """\

@@ -1,0 +1,55 @@
+"""Organization and layout evidence clusters."""
+
+from __future__ import annotations
+
+from ._accessors import _get_signals, _safe_num
+
+
+def _build_flat_dir_issues(by_detector: dict[str, list[dict]]) -> list[dict]:
+    """From flat_dirs detector."""
+    results: list[dict] = []
+    for issue in by_detector.get("flat_dirs", []):
+        filepath = issue.get("file", "")
+        detail = issue.get("detail", {})
+        if not isinstance(detail, dict):
+            detail = {}
+        detail.setdefault("kind", "")
+        detail.setdefault("reason", "")
+        detail.setdefault("file_count", 0)
+        detail.setdefault("score", 0)
+        detail.setdefault("combined_score", 0)
+        results.append(
+            {
+                "directory": filepath,
+                "kind": detail.get("kind", detail.get("reason", "")),
+                "file_count": int(_safe_num(detail.get("file_count"))),
+                "combined_score": int(
+                    _safe_num(detail.get("score", detail.get("combined_score")))
+                ),
+            }
+        )
+    results.sort(key=lambda e: -e["combined_score"])
+    return results[:20]
+
+
+def _build_large_file_distribution(by_detector: dict[str, list[dict]]) -> dict | None:
+    """Distribution stats from structural issues."""
+    locs: list[float] = []
+    for issue in by_detector.get("structural", []):
+        signals = _get_signals(issue)
+        loc = _safe_num(signals.get("loc"))
+        if loc > 0:
+            locs.append(loc)
+    if not locs:
+        return None
+    locs.sort()
+    n = len(locs)
+    return {
+        "count": n,
+        "median_loc": int(locs[n // 2]),
+        "p90_loc": int(locs[int(n * 0.9)]) if n >= 10 else int(locs[-1]),
+        "p99_loc": int(locs[int(n * 0.99)]) if n >= 100 else int(locs[-1]),
+    }
+
+
+__all__ = ["_build_flat_dir_issues", "_build_large_file_distribution"]

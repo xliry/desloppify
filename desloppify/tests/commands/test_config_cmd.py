@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from desloppify.app.commands import config_cmd
+from desloppify.app.commands import config as config_cmd
 
 
 def test_cmd_config_routes_set(monkeypatch):

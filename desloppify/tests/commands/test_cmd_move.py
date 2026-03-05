@@ -3,17 +3,17 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-import desloppify.app.commands.move.move as move_mod
-from desloppify.app.commands.move.move import _cmd_move_dir
-from desloppify.app.commands.move.move_language import (
+import desloppify.app.commands.move.cmd as move_mod
+from desloppify.app.commands.move.cmd import _cmd_move_dir
+from desloppify.app.commands.move.language import (
     detect_lang_from_dir,
     detect_lang_from_ext,
     resolve_lang_for_file_move,
     resolve_move_verify_hint,
 )
-from desloppify.app.commands.move.move_planning import dedup_replacements, resolve_dest
-from desloppify.core.discovery_api import resolve_path
-from desloppify.core.discovery_api import safe_write_text as safe_write
+from desloppify.app.commands.move.planning import dedup_replacements, resolve_dest
+from desloppify.base.discovery.file_paths import resolve_path
+from desloppify.base.discovery.file_paths import safe_write_text as safe_write
 
 # ---------------------------------------------------------------------------
 # Module imports
@@ -186,7 +186,7 @@ class TestResolveLangPrecedence:
             path = "."
 
         monkeypatch.setattr(
-            "desloppify.app.commands.move.move_language.resolve_lang",
+            "desloppify.app.commands.move.language.resolve_lang",
             lambda _args: type("L", (), {"name": "python"})(),
         )
         result = resolve_lang_for_file_move("/tmp/example.ts", FakeArgs())
@@ -218,11 +218,11 @@ class TestResolveLangPrecedence:
                 return []
 
         monkeypatch.setattr(
-            "desloppify.app.commands.move.move_directory.detect_lang_from_dir",
+            "desloppify.app.commands.move.directory.detect_lang_from_dir",
             lambda _p: "typescript",
         )
         monkeypatch.setattr(
-            "desloppify.app.commands.move.move_directory.resolve_lang",
+            "desloppify.app.commands.move.directory.resolve_lang",
             lambda _args: type("L", (), {"name": "python"})(),
         )
         monkeypatch.setattr(
@@ -230,7 +230,7 @@ class TestResolveLangPrecedence:
             lambda name: captured.append(name) or FakeLang(),
         )
         monkeypatch.setattr(
-            "desloppify.app.commands.move.move_directory.load_lang_move_module",
+            "desloppify.app.commands.move.directory.load_lang_move_module",
             lambda _n: FakeMoveMod(),
         )
 

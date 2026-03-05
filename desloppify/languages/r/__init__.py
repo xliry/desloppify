@@ -26,3 +26,8 @@ generic_lang(
     default_src="R",
     treesitter_spec=R_SPEC,
 )
+
+__all__ = [
+    "generic_lang",
+    "R_SPEC",
+]

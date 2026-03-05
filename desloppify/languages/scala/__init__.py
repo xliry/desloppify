@@ -21,3 +21,8 @@ generic_lang(
     detect_markers=["build.sbt"],
     treesitter_spec=SCALA_SPEC,
 )
+
+__all__ = [
+    "generic_lang",
+    "SCALA_SPEC",
+]

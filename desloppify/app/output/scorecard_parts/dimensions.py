@@ -2,54 +2,70 @@
 
 from __future__ import annotations
 
-from desloppify.app.output.scorecard_parts.dimension_policy import (
-    _DEFAULT_ELEGANCE_COMPONENTS,
-    _ELEGANCE_COMPONENTS_BY_LANG,
-    _SUBJECTIVE_SCORECARD_ORDER_BY_LANG,
-    _SUBJECTIVE_SCORECARD_ORDER_DEFAULT,
+from desloppify.engine.planning.scorecard_policy import (
+    DEFAULT_ELEGANCE_COMPONENTS,
+    ELEGANCE_COMPONENTS_BY_LANG,
+    SCORECARD_MAX_DIMENSIONS,
+    SUBJECTIVE_SCORECARD_ORDER_BY_LANG,
+    SUBJECTIVE_SCORECARD_ORDER_DEFAULT,
 )
-from desloppify.app.output.scorecard_parts.dimension_policy import (
-    _SCORECARD_MAX_DIMENSIONS as SCORECARD_MAX_DIMENSIONS,
-)
+
+
+def _lang_from_scan_history(state: dict) -> str | None:
+    history = state.get("scan_history")
+    if not isinstance(history, list):
+        return None
+    for entry in reversed(history):
+        if not isinstance(entry, dict):
+            continue
+        lang = entry.get("lang")
+        if isinstance(lang, str) and lang.strip():
+            return lang.strip().lower()
+    return None
+
+
+def _lang_from_capabilities(state: dict) -> str | None:
+    capabilities = state.get("lang_capabilities")
+    if not isinstance(capabilities, dict) or len(capabilities) != 1:
+        return None
+    only_lang = next(iter(capabilities.keys()))
+    if isinstance(only_lang, str) and only_lang.strip():
+        return only_lang.strip().lower()
+    return None
+
+
+def _lang_from_issues(state: dict) -> str | None:
+    issues = state.get("issues")
+    if not isinstance(issues, dict):
+        return None
+    counts: dict[str, int] = {}
+    for issue in issues.values():
+        if not isinstance(issue, dict):
+            continue
+        lang = issue.get("lang")
+        if not isinstance(lang, str) or not lang.strip():
+            continue
+        key = lang.strip().lower()
+        counts[key] = counts.get(key, 0) + 1
+    if counts:
+        return max(counts, key=counts.get)
+    return None
 
 
 def resolve_scorecard_lang(state: dict) -> str | None:
     """Best-effort current scan language key for scorecard display policy."""
-    history = state.get("scan_history")
-    if isinstance(history, list):
-        for entry in reversed(history):
-            if not isinstance(entry, dict):
-                continue
-            lang = entry.get("lang")
-            if isinstance(lang, str) and lang.strip():
-                return lang.strip().lower()
-
-    capabilities = state.get("lang_capabilities")
-    if isinstance(capabilities, dict) and len(capabilities) == 1:
-        only_lang = next(iter(capabilities.keys()))
-        if isinstance(only_lang, str) and only_lang.strip():
-            return only_lang.strip().lower()
-
-    findings = state.get("findings")
-    if isinstance(findings, dict):
-        counts: dict[str, int] = {}
-        for finding in findings.values():
-            if not isinstance(finding, dict):
-                continue
-            lang = finding.get("lang")
-            if isinstance(lang, str) and lang.strip():
-                key = lang.strip().lower()
-                counts[key] = counts.get(key, 0) + 1
-        if counts:
-            return max(counts, key=counts.get)
-    return None
+    return (
+        _lang_from_scan_history(state)
+        or _lang_from_capabilities(state)
+        or _lang_from_issues(state)
+    )
 
 
 def is_unassessed_subjective_placeholder(data: dict) -> bool:
     return (
         "subjective_assessment" in data.get("detectors", {})
         and data.get("score", 0) == 0
-        and data.get("issues", 0) == 0
+        and data.get("failing", 0) == 0
     )
 
 
@@ -60,7 +76,7 @@ def collapse_elegance_dimensions(
 ) -> list[tuple[str, dict]]:
     """Collapse High/Mid/Low elegance rows into one aggregate display row."""
     component_names = set(
-        _ELEGANCE_COMPONENTS_BY_LANG.get(lang_key or "", _DEFAULT_ELEGANCE_COMPONENTS)
+        ELEGANCE_COMPONENTS_BY_LANG.get(lang_key or "", DEFAULT_ELEGANCE_COMPONENTS)
     )
     elegance_rows = [
         (name, data) for name, data in active_dims if name in component_names
@@ -84,7 +100,7 @@ def collapse_elegance_dimensions(
         1,
     )
     checks_total = sum(int(data.get("checks", 0)) for _, data in elegance_rows)
-    issues_total = sum(int(data.get("issues", 0)) for _, data in elegance_rows)
+    issues_total = sum(int(data.get("failing", 0)) for _, data in elegance_rows)
     tier = max(int(data.get("tier", 4)) for _, data in elegance_rows)
     placeholder_flags = [
         bool(
@@ -100,29 +116,26 @@ def collapse_elegance_dimensions(
         label = "Elegance (combined)"
 
     pass_rate = round(score_avg / 100.0, 4)
-    return [
-        *remaining_rows,
-        (
-            label,
-            {
-                "score": score_avg,
-                "strict": strict_avg,
-                "checks": checks_total,
-                "issues": issues_total,
-                "tier": tier,
-                "detectors": {
-                    "subjective_assessment": {
-                        "potential": checks_total,
-                        "pass_rate": pass_rate,
-                        "issues": issues_total,
-                        "weighted_failures": round(checks_total * (1 - pass_rate), 4),
-                        "components": [name for name, _ in elegance_rows],
-                        "placeholder": any(placeholder_flags),
-                    }
-                },
-            },
-        ),
-    ]
+    combined_entry = {
+        "score": score_avg,
+        "strict": strict_avg,
+        "checks": checks_total,
+        "failing": issues_total,
+        "tier": tier,
+        "detectors": {
+            "subjective_assessment": {
+                "potential": checks_total,
+                "pass_rate": pass_rate,
+                "failing": issues_total,
+                "weighted_failures": round(checks_total * (1 - pass_rate), 4),
+                "components": [name for name, _ in elegance_rows],
+            }
+        },
+    }
+    combined_entry["detectors"]["subjective_assessment"]["placeholder"] = any(
+        placeholder_flags
+    )
+    return [*remaining_rows, (label, combined_entry)]
 
 
 def limit_scorecard_dimensions(
@@ -149,9 +162,9 @@ def limit_scorecard_dimensions(
         return mechanical[:max_rows]
 
     budget = max_rows - len(mechanical)
-    preferred_order = _SUBJECTIVE_SCORECARD_ORDER_BY_LANG.get(
+    preferred_order = SUBJECTIVE_SCORECARD_ORDER_BY_LANG.get(
         lang_key or "",
-        _SUBJECTIVE_SCORECARD_ORDER_DEFAULT,
+        SUBJECTIVE_SCORECARD_ORDER_DEFAULT,
     )
 
     remaining = {name: (name, data) for name, data in subjective}

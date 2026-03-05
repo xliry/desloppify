@@ -21,3 +21,8 @@ generic_lang(
     detect_markers=["pom.xml", "build.gradle"],
     treesitter_spec=JAVA_SPEC,
 )
+
+__all__ = [
+    "generic_lang",
+    "JAVA_SPEC",
+]

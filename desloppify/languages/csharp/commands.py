@@ -6,12 +6,13 @@ import argparse
 import json
 from pathlib import Path
 
+from desloppify.base.discovery.file_paths import rel
+from desloppify.base.output.terminal import colorize, print_table
 from desloppify.engine.detectors.dupes import detect_duplicates
 from desloppify.engine.detectors.orphaned import (
     OrphanedDetectionOptions,
     detect_orphaned_files,
 )
-from desloppify.core.discovery_api import rel
 from desloppify.languages._framework.commands_base import (
     build_standard_detect_registry,
     make_cmd_complexity,
@@ -28,7 +29,6 @@ from desloppify.languages.csharp.extractors import (
     find_csharp_files,
 )
 from desloppify.languages.csharp.phases import CSHARP_COMPLEXITY_SIGNALS
-from desloppify.core.output_api import colorize, print_table
 
 _cmd_large_impl = make_cmd_large(find_csharp_files, default_threshold=500)
 _cmd_complexity_impl = make_cmd_complexity(
@@ -122,8 +122,7 @@ def cmd_dupes(args: argparse.Namespace) -> None:
     print_table(["Function A", "Function B", "Sim", "Kind"], rows, [40, 40, 5, 14])
 
 
-def get_detect_commands() -> dict[str, object]:
-    """Return the standard detect command registry for C#."""
+def get_detect_commands():
     return build_standard_detect_registry(
         cmd_deps=cmd_deps,
         cmd_cycles=cmd_cycles,

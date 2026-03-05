@@ -1,4 +1,4 @@
-"""Scan merge/update operations for persisted findings state."""
+"""Scan merge/update operations for persisted issues state."""
 
 from __future__ import annotations
 
@@ -10,17 +10,18 @@ __all__ = [
     "merge_scan",
 ]
 
-from desloppify.engine._state.merge_findings import (
-    auto_resolve_disappeared,
-    find_suspect_detectors,
-    upsert_findings,
-)
+from desloppify.base.registry import DETECTORS
 from desloppify.engine._state.merge_history import (
     _append_scan_history,
     _build_merge_diff,
     _compute_suppression,
     _merge_scan_inputs,
     _record_scan_metadata,
+)
+from desloppify.engine._state.merge_issues import (
+    auto_resolve_disappeared,
+    find_suspect_detectors,
+    upsert_issues,
 )
 from desloppify.engine._state.schema import (
     ScanDiff,
@@ -29,10 +30,12 @@ from desloppify.engine._state.schema import (
     utc_now,
     validate_state_invariants,
 )
-from desloppify.engine._state.scoring import _recompute_stats
+
+
+from desloppify.engine._state import _recompute_stats
 
 # Mechanical detectors → subjective dimensions they provide evidence for.
-# When findings from these detectors change during a scan, the corresponding
+# When issues from these detectors change during a scan, the corresponding
 # subjective assessments are marked stale so reviewers know to re-evaluate.
 _DETECTOR_SUBJECTIVE_DIMENSIONS: dict[str, tuple[str, ...]] = {
     "structural": ("design_coherence", "abstraction_fitness"),
@@ -58,7 +61,7 @@ def _mark_stale_on_mechanical_change(
     changed_detectors: set[str],
     now: str,
 ) -> None:
-    """Mark subjective assessments stale when mechanical findings change.
+    """Mark subjective assessments stale when mechanical issues change.
 
     Only marks dimensions that already have an assessment — doesn't create
     new entries for dimensions that have never been reviewed.
@@ -69,8 +72,20 @@ def _mark_stale_on_mechanical_change(
 
     affected_dims: set[str] = set()
     for detector in changed_detectors:
-        dims = _DETECTOR_SUBJECTIVE_DIMENSIONS.get(detector, ())
-        affected_dims.update(dims)
+        meta = DETECTORS.get(detector)
+        if meta is None or not meta.marks_dims_stale:
+            continue
+        dims = _DETECTOR_SUBJECTIVE_DIMENSIONS.get(detector)
+        if dims:
+            affected_dims.update(dims)
+            continue
+        # Safety fallback for newly added "marks_dims_stale" detectors that
+        # have not declared fine-grained dimension mappings yet.
+        affected_dims.update(
+            dim
+            for dim in assessments
+            if isinstance(dim, str) and dim.strip()
+        )
 
     if not affected_dims:
         return
@@ -85,7 +100,7 @@ def _mark_stale_on_mechanical_change(
         if payload.get("needs_review_refresh"):
             continue
         payload["needs_review_refresh"] = True
-        payload["refresh_reason"] = "mechanical_findings_changed"
+        payload["refresh_reason"] = "mechanical_issues_changed"
         payload["stale_since"] = now
 
 
@@ -107,7 +122,7 @@ class MergeScanOptions:
 
 def merge_scan(
     state: StateModel,
-    current_findings: list[dict],
+    current_issues: list[dict],
     options: MergeScanOptions | None = None,
 ) -> ScanDiff:
     """Merge a fresh scan into existing state and return a diff summary."""
@@ -130,24 +145,24 @@ def merge_scan(
         codebase_metrics=resolved_options.codebase_metrics,
     )
 
-    existing = state["findings"]
+    existing = state["issues"]
     ignore_patterns = (
         resolved_options.ignore
         if resolved_options.ignore is not None
         else state.get("config", {}).get("ignore", [])
     )
     current_ids, new_count, reopened_count, current_by_detector, ignored_count, upsert_changed = (
-        upsert_findings(
+        upsert_issues(
             existing,
-            current_findings,
+            current_issues,
             ignore_patterns,
             now,
             lang=resolved_options.lang,
         )
     )
 
-    raw_findings = len(current_findings)
-    suppressed_pct = _compute_suppression(raw_findings, ignored_count)
+    raw_issues = len(current_issues)
+    suppressed_pct = _compute_suppression(raw_issues, ignored_count)
 
     ran_detectors = (
         set(resolved_options.potentials.keys())
@@ -160,7 +175,7 @@ def merge_scan(
         resolved_options.force_resolve,
         ran_detectors,
     )
-    auto_resolved, skipped_other_lang, skipped_out_of_scope, resolve_changed = auto_resolve_disappeared(
+    auto_resolved, skipped_other_lang, resolved_out_of_scope, resolve_changed = auto_resolve_disappeared(
         existing,
         current_ids,
         suspect_detectors,
@@ -170,7 +185,7 @@ def merge_scan(
         exclude=resolved_options.exclude,
     )
 
-    # Mark subjective assessments stale when mechanical findings changed.
+    # Mark subjective assessments stale when mechanical issues changed.
     changed_detectors = upsert_changed | resolve_changed
     if changed_detectors:
         _mark_stale_on_mechanical_change(
@@ -189,15 +204,15 @@ def merge_scan(
         new_count=new_count,
         auto_resolved=auto_resolved,
         ignored_count=ignored_count,
-        raw_findings=raw_findings,
+        raw_issues=raw_issues,
         suppressed_pct=suppressed_pct,
         ignore_pattern_count=len(ignore_patterns),
     )
 
     chronic_reopeners = [
-        finding
-        for finding in existing.values()
-        if finding.get("reopen_count", 0) >= 2 and finding["status"] == "open"
+        issue
+        for issue in existing.values()
+        if issue.get("reopen_count", 0) >= 2 and issue["status"] == "open"
     ]
 
     validate_state_invariants(state)
@@ -209,9 +224,9 @@ def merge_scan(
         suspect_detectors=suspect_detectors,
         chronic_reopeners=chronic_reopeners,
         skipped_other_lang=skipped_other_lang,
-        skipped_out_of_scope=skipped_out_of_scope,
+        resolved_out_of_scope=resolved_out_of_scope,
         ignored_count=ignored_count,
         ignore_pattern_count=len(ignore_patterns),
-        raw_findings=raw_findings,
+        raw_issues=raw_issues,
         suppressed_pct=suppressed_pct,
     )

@@ -64,8 +64,7 @@ def cmd_dupes(args: argparse.Namespace) -> None:
     _cmd_dupes_impl(args)
 
 
-def get_detect_commands() -> dict[str, object]:
-    """Return the standard detect command registry for Go."""
+def get_detect_commands():
     return build_standard_detect_registry(
         cmd_deps=cmd_deps,
         cmd_cycles=cmd_cycles,

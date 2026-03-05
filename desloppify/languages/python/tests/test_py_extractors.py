@@ -278,6 +278,49 @@ class TestExtractPyClasses:
             cls = classes[0]
             assert len(cls.attributes) >= 8
 
+    def test_dataclass_fields_count_as_attributes(self, tmp_path):
+        methods = "\n".join(
+            f"    def m{i}(self):\n"
+            + "\n".join(f"        x_{j} = {j}" for j in range(5))
+            for i in range(8)
+        )
+        code = (
+            "from dataclasses import dataclass\n\n"
+            "@dataclass\n"
+            "class DataClassAttrs:\n"
+            "    id: int\n"
+            "    name: str\n"
+            "    enabled: bool = True\n\n"
+            f"{methods}\n"
+        )
+        fp = tmp_path / "data_class_attrs.py"
+        fp.write_text(code)
+        classes = extract_py_classes(tmp_path)
+        if classes:
+            cls = classes[0]
+            assert {"id", "name", "enabled"}.issubset(set(cls.attributes))
+
+    def test_aliased_dataclass_decorator_is_detected(self, tmp_path):
+        methods = "\n".join(
+            f"    def m{i}(self):\n"
+            + "\n".join(f"        x_{j} = {j}" for j in range(5))
+            for i in range(8)
+        )
+        code = (
+            "import dataclasses as dc\n\n"
+            "@dc.dataclass(frozen=True)\n"
+            "class AliasedDataClass:\n"
+            "    code: str\n"
+            "    retries: int = 0\n\n"
+            f"{methods}\n"
+        )
+        fp = tmp_path / "aliased_data_class_attrs.py"
+        fp.write_text(code)
+        classes = extract_py_classes(tmp_path)
+        if classes:
+            cls = classes[0]
+            assert {"code", "retries"}.issubset(set(cls.attributes))
+
     def test_small_class_skipped(self, tmp_path):
         code = "class Small:\n    x = 1\n    def foo(self): pass\n"
         fp = tmp_path / "small.py"

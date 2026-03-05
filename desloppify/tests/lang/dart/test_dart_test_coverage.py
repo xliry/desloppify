@@ -32,7 +32,10 @@ def test_map_test_to_source_prefers_lib_path(tmp_path):
     test_path.write_text("import 'package:test/test.dart';")
 
     production = {str(source.resolve())}
-    with patch("desloppify.languages.dart.test_coverage.PROJECT_ROOT", tmp_path):
+    with patch(
+        "desloppify.languages.dart.test_coverage.get_project_root",
+        return_value=tmp_path,
+    ):
         mapped = dart_cov.map_test_to_source(str(test_path), production)
 
     assert mapped == str(source.resolve())
@@ -47,7 +50,10 @@ def test_resolve_import_spec_handles_relative_import(tmp_path):
     test_file.write_text("import '../lib/service.dart';")
 
     production = {str(source.resolve())}
-    with patch("desloppify.languages.dart.test_coverage.PROJECT_ROOT", tmp_path):
+    with patch(
+        "desloppify.languages.dart.test_coverage.get_project_root",
+        return_value=tmp_path,
+    ):
         resolved = dart_cov.resolve_import_spec(
             "../lib/service.dart", str(test_file), production
         )

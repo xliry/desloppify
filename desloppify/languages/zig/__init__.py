@@ -20,3 +20,8 @@ generic_lang(
     detect_markers=["build.zig"],
     treesitter_spec=ZIG_SPEC,
 )
+
+__all__ = [
+    "generic_lang",
+    "ZIG_SPEC",
+]

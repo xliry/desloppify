@@ -1,7 +1,7 @@
 """Zone classification system — deterministic file intent classification.
 
 Classifies files into zones (production, test, config, generated, script, vendor)
-based on path patterns. Zone metadata flows through findings, scoring, and the LLM.
+based on path patterns. Zone metadata flows through issues, scoring, and the LLM.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import os
 from dataclasses import dataclass, field
 from enum import Enum
 
-from desloppify.core.fallbacks import log_best_effort_failure
+from desloppify.base.output.fallbacks import log_best_effort_failure
 from desloppify.engine.policy.zones_data import (
     CONFIG_SKIP_DETECTORS,
     SCRIPT_SKIP_DETECTORS,
@@ -36,7 +36,7 @@ class Zone(str, Enum):
 # Zones excluded from the health score
 EXCLUDED_ZONES = {Zone.TEST, Zone.CONFIG, Zone.GENERATED, Zone.VENDOR}
 
-# String values for quick lookup in scoring (findings store zone as string)
+# String values for quick lookup in scoring (issues store zone as string)
 EXCLUDED_ZONE_VALUES = {z.value for z in EXCLUDED_ZONES}
 
 
@@ -134,14 +134,7 @@ class FileZoneMap:
         rel_fn=None,
         overrides: dict[str, str] | None = None,
     ):
-        """Build zone map.
-
-        Args:
-            files: List of file paths (absolute or relative).
-            rules: Ordered zone rules (first match wins).
-            rel_fn: Optional function to convert paths to relative.
-            overrides: Manual zone overrides {rel_path: zone_value}.
-        """
+        """Build a zone map from files, ordered rules, and optional overrides."""
         self._map: dict[str, Zone] = {}
         self._overrides = overrides
         for f in files:
@@ -195,7 +188,7 @@ class ZonePolicy:
 
     skip_detectors: detectors to skip entirely for this zone.
     downgrade_detectors: detectors whose confidence is downgraded to "low".
-    exclude_from_score: whether findings in this zone are excluded from scoring.
+    exclude_from_score: whether issues in this zone are excluded from scoring.
     """
 
     skip_detectors: set[str] = field(default_factory=set)
@@ -243,8 +236,8 @@ def adjust_potential(zone_map, total: int) -> int:
     return max(total - zone_map.non_production_count(), 0)
 
 
-def should_skip_finding(zone_map, filepath: str, detector: str) -> bool:
-    """Check if a finding should be skipped based on zone policy.
+def should_skip_issue(zone_map, filepath: str, detector: str) -> bool:
+    """Check if a issue should be skipped based on zone policy.
 
     Returns True if the file's zone policy says to skip this detector.
     """
@@ -271,5 +264,5 @@ def filter_entries(
         return val[0] if isinstance(val, list) else val
 
     return [
-        e for e in entries if not should_skip_finding(zone_map, _get_path(e), detector)
+        e for e in entries if not should_skip_issue(zone_map, _get_path(e), detector)
     ]

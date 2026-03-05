@@ -12,6 +12,15 @@ from .discovery import load_all
 _MARKER_GLOB_CHARS = ("*", "?", "[")
 
 
+def _reset_dynamic_registries_for_refresh() -> None:
+    """Reset registries that plugins populate at import time."""
+    from desloppify.base.registry import reset_registered_detectors
+    from desloppify.engine._scoring.policy.core import reset_registered_scoring_policies
+
+    reset_registered_detectors()
+    reset_registered_scoring_policies()
+
+
 def make_lang_config(name: str, cfg_cls: type) -> LangConfig:
     """Instantiate and validate a language config."""
     try:
@@ -24,13 +33,16 @@ def make_lang_config(name: str, cfg_cls: type) -> LangConfig:
     return cfg
 
 
-def get_lang(name: str) -> LangConfig:
+def get_lang(name: str, *, refresh_registry: bool = False) -> LangConfig:
     """Get a language config by name.
 
     All plugins (full and generic) store LangConfig instances in the registry.
     Test doubles that store plain classes are instantiated on demand as a fallback.
     """
-    if not registry_state.is_registered(name):
+    if refresh_registry:
+        _reset_dynamic_registries_for_refresh()
+        load_all(force_reload=True)
+    elif not registry_state.is_registered(name):
         load_all()
     if not registry_state.is_registered(name):
         available = ", ".join(sorted(registry_state.all_keys()))
@@ -41,14 +53,20 @@ def get_lang(name: str) -> LangConfig:
     return make_lang_config(name, obj)  # fallback for test doubles
 
 
-def auto_detect_lang(project_root: Path) -> str | None:
+def auto_detect_lang(
+    project_root: Path,
+    *,
+    refresh_registry: bool = False,
+) -> str | None:
     """Auto-detect language from project files.
 
     When multiple config files are present (e.g. package.json + pyproject.toml),
     counts actual source files to pick the dominant language instead of relying
     on first-match ordering.
     """
-    load_all()
+    if refresh_registry:
+        _reset_dynamic_registries_for_refresh()
+    load_all(force_reload=refresh_registry)
     candidates: list[str] = []
     configs: dict[str, LangConfig] = {}
 
@@ -95,27 +113,9 @@ def _detect_marker_exists(project_root: Path, marker: str) -> bool:
     return False
 
 
-def available_langs() -> list[str]:
+def available_langs(*, refresh_registry: bool = False) -> list[str]:
     """Return list of registered language names."""
-    load_all()
+    if refresh_registry:
+        _reset_dynamic_registries_for_refresh()
+    load_all(force_reload=refresh_registry)
     return sorted(registry_state.all_keys())
-
-
-def discover_repo_languages(project_root: Path) -> dict[str, int]:
-    """Detect all languages present in the project root.
-
-    Returns a dict of ``{lang_name: file_count}`` for every registered
-    language that has at least one source file under *project_root*, sorted
-    by descending file count.
-    """
-    load_all()
-    counts: dict[str, int] = {}
-    for lang_name, obj in registry_state.all_items():
-        cfg = obj if isinstance(obj, LangConfig) else make_lang_config(lang_name, obj)
-        try:
-            n = len(cfg.file_finder(project_root))
-        except Exception:
-            n = 0
-        if n > 0:
-            counts[lang_name] = n
-    return dict(sorted(counts.items(), key=lambda kv: -kv[1]))

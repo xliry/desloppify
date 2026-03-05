@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from desloppify.engine.planning.scan import PlanScanOptions, generate_findings
+from desloppify.engine.planning.scan import PlanScanOptions, generate_issues
 from desloppify.languages._framework.base.types import DetectorPhase
 from desloppify.languages._framework.runtime import (
     LangRun,
@@ -48,7 +48,7 @@ def test_make_lang_run_instances_do_not_share_runtime_state() -> None:
     assert run_a.state.runtime_options is not run_b.state.runtime_options
 
 
-def test_generate_findings_keeps_runtime_fields_off_lang_config(tmp_path: Path) -> None:
+def test_generate_issues_keeps_runtime_fields_off_lang_config(tmp_path: Path) -> None:
     config = PythonConfig()
     source = tmp_path / "sample.py"
     source.write_text("def f():\n    return 1\n")
@@ -64,13 +64,13 @@ def test_generate_findings_keeps_runtime_fields_off_lang_config(tmp_path: Path) 
     config.file_finder = lambda _path: [str(source)]
     config.zone_rules = []
 
-    findings, potentials = generate_findings(
+    issues, potentials = generate_issues(
         tmp_path,
         lang=config,
         options=PlanScanOptions(include_slow=False, profile="objective"),
     )
 
-    assert findings == []
+    assert issues == []
     assert potentials == {}
 
     for attr in (

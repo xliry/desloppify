@@ -19,3 +19,8 @@ generic_lang(
     depth="minimal",
     treesitter_spec=LUA_SPEC,
 )
+
+__all__ = [
+    "generic_lang",
+    "LUA_SPEC",
+]

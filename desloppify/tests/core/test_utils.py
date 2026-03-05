@@ -1,41 +1,40 @@
-"""Tests for desloppify.utils — paths, exclusions, file discovery, grep, hashing."""
+"""Tests for core utilities — paths, exclusions, file discovery, grep, hashing."""
 
 import os
 from pathlib import Path
 
 import pytest
 
-import desloppify.core._internal.text_utils as utils_text_mod
-import desloppify.file_discovery as file_discovery_mod
-import desloppify.utils as utils_mod
-from desloppify.core.discovery_api import (
-    find_source_files,
-    get_exclusions,
+import desloppify.base.text_utils as utils_text_mod
+import desloppify.base.discovery.paths as paths_api_mod
+import desloppify.base.tooling as tooling_mod
+from desloppify.base.discovery.file_paths import (
     matches_exclusion,
     rel,
     resolve_path,
+)
+from desloppify.base.discovery.source import (
+    clear_source_file_cache_for_tests,
+    find_source_files,
+    get_exclusions,
     set_exclusions,
 )
-from desloppify.utils import (
-    check_tool_staleness,
-    compute_tool_hash,
-    grep_count_files,
-    grep_files,
-    grep_files_containing,
-    read_code_snippet,
-)
+from desloppify.base.search.grep import grep_count_files, grep_files, grep_files_containing
+from desloppify.base.discovery.paths import read_code_snippet
+from desloppify.base.tooling import check_tool_staleness, compute_tool_hash
 
 
 @pytest.fixture
 def patch_project_root(monkeypatch):
-    """Patch PROJECT_ROOT via RuntimeContext so all consumers see the override."""
-    from desloppify.core.runtime_state import current_runtime_context
+    """Patch project root via RuntimeContext so all consumers see the override."""
+    from desloppify.base.runtime_state import current_runtime_context
+
     ctx = current_runtime_context()
+
     def _patch(tmp_path):
         monkeypatch.setattr(ctx, "project_root", tmp_path)
-        monkeypatch.setattr(utils_mod, "PROJECT_ROOT", tmp_path)
-        monkeypatch.setattr(utils_text_mod, "PROJECT_ROOT", tmp_path)
-        file_discovery_mod.clear_source_file_cache_for_tests()
+        clear_source_file_cache_for_tests()
+
     return _patch
 
 
@@ -44,7 +43,7 @@ def patch_project_root(monkeypatch):
 
 def test_rel_absolute_under_project_root(monkeypatch):
     """Absolute path under PROJECT_ROOT is converted to relative."""
-    root = utils_mod.PROJECT_ROOT
+    root = paths_api_mod.get_project_root()
     abs_path = str(root / "foo" / "bar.py")
     assert rel(abs_path) == "foo/bar.py"
 
@@ -55,7 +54,7 @@ def test_rel_path_outside_project_root(tmp_path, monkeypatch):
     result = rel(outside)
     # Path outside PROJECT_ROOT should be normalized to a relative path
     try:
-        expected = os.path.relpath(outside, str(utils_mod.PROJECT_ROOT)).replace(
+        expected = os.path.relpath(outside, str(paths_api_mod.get_project_root())).replace(
             "\\", "/"
         )
     except ValueError:
@@ -67,12 +66,12 @@ def test_rel_path_outside_project_root(tmp_path, monkeypatch):
 # ── resolve_path() ───────────────────────────────────────────
 
 
-def test_resolve_path_relative(monkeypatch):
+def test_resolve_path_relative():
     """Relative path is resolved to absolute under PROJECT_ROOT."""
-    monkeypatch.setattr(utils_mod, "PROJECT_ROOT", utils_mod.PROJECT_ROOT)
+    root = paths_api_mod.get_project_root()
     result = resolve_path("src/foo.py")
     assert os.path.isabs(result)
-    assert result == str((utils_mod.PROJECT_ROOT / "src" / "foo.py").resolve())
+    assert result == str((root / "src" / "foo.py").resolve())
 
 
 def test_resolve_path_absolute(tmp_path):
@@ -133,6 +132,11 @@ def test_matches_exclusion_nested_dir_doublestar():
     assert matches_exclusion("src/vendor/foo.py", "src/vendor/**") is True
     assert matches_exclusion("src/vendor/sub/bar.py", "src/vendor/**") is True
     assert matches_exclusion("src/other/foo.py", "src/vendor/**") is False
+
+
+def test_matches_exclusion_exact_directory_path():
+    """Multi-segment exclusions should match the directory itself, not only children."""
+    assert matches_exclusion(".claude/worktrees", ".claude/worktrees") is True
 
 
 # ── find_source_files() ─────────────────────────────────────
@@ -224,7 +228,7 @@ def test_set_exclusions(monkeypatch):
     finally:
         # Restore
         set_exclusions(list(original))
-        file_discovery_mod.clear_source_file_cache_for_tests()
+        clear_source_file_cache_for_tests()
 
 
 # ── grep_files() ─────────────────────────────────────────────
@@ -392,7 +396,7 @@ def test_check_tool_staleness_reports_unreadable_files(tmp_path, monkeypatch):
         return original_read_bytes(path_obj)
 
     monkeypatch.setattr(Path, "read_bytes", _patched_read_bytes, raising=False)
-    monkeypatch.setattr(utils_mod, "TOOL_DIR", tool_dir)
+    monkeypatch.setattr(tooling_mod, "TOOL_DIR", tool_dir)
 
     result = check_tool_staleness({"tool_hash": "aaaaaaaaaaaa"})
     assert result is not None

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from desloppify.core.file_paths import resolve_scan_file
+from desloppify.base.discovery.file_paths import resolve_scan_file
 from desloppify.engine.policy.zones import FileZoneMap
 
 from .filters import _is_test_file, _should_scan_file, _should_skip_line

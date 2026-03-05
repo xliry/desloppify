@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from desloppify import languages as lang_api
-from desloppify.core._internal.text_utils import PROJECT_ROOT
+from desloppify.base.discovery.paths import get_project_root
 
 if TYPE_CHECKING:
     from desloppify.languages._framework.base.types import LangConfig
@@ -71,22 +71,23 @@ def _lang_config_markers() -> tuple[str, ...]:
 
 
 def resolve_detection_root(
-    args,
+    args: object,
     *,
-    project_root: Path = PROJECT_ROOT,
+    project_root: Path | None = None,
     marker_provider: Callable[[], tuple[str, ...]] | None = None,
 ) -> Path:
     """Best root to auto-detect language from."""
     marker_provider = marker_provider or _lang_config_markers
     markers = marker_provider()
+    root = project_root if project_root is not None else get_project_root()
 
     raw_path = getattr(args, "path", None)
     if not raw_path:
-        return project_root
+        return root
 
     candidate = Path(raw_path)
     if not candidate.is_absolute():
-        candidate = project_root / candidate
+        candidate = root / candidate
     candidate = candidate.resolve()
     search_root = candidate if candidate.is_dir() else candidate.parent
 
@@ -96,16 +97,16 @@ def resolve_detection_root(
     return search_root
 
 
-def auto_detect_lang_name(args) -> str | None:
+def auto_detect_lang_name(args: object) -> str | None:
     """Auto-detect language using the most relevant root for this command."""
     root = resolve_detection_root(args)
     detected = lang_api.auto_detect_lang(root)
-    if detected is None and root != PROJECT_ROOT:
-        detected = lang_api.auto_detect_lang(PROJECT_ROOT)
+    if detected is None and root != get_project_root():
+        detected = lang_api.auto_detect_lang(get_project_root())
     return detected
 
 
-def resolve_lang(args) -> LangConfig | None:
+def resolve_lang(args: object) -> LangConfig | None:
     """Resolve language config from args, with auto-detection fallback."""
     lang_name = getattr(args, "lang", None)
     if lang_name is None:

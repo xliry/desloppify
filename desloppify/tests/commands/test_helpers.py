@@ -179,17 +179,26 @@ def test_state_path_no_args_with_auto_detect(monkeypatch):
         "desloppify.app.commands.helpers.state.auto_detect_lang_name",
         lambda _: "typescript",
     )
+    # Disable the sole-state-file fallback so the test exercises auto-detect.
+    monkeypatch.setattr(
+        "desloppify.app.commands.helpers.state._sole_existing_lang_state_file",
+        lambda: None,
+    )
     result = state_path(args)
     assert result is not None
     assert "state-typescript.json" in str(result)
 
 
 def test_state_path_returns_none_when_nothing_detected(monkeypatch):
-    """When auto-detection fails, returns None."""
+    """When auto-detection fails and no fallback state file exists, returns None."""
     args = SimpleNamespace(state=None, lang=None)
     monkeypatch.setattr(
         "desloppify.app.commands.helpers.state.auto_detect_lang_name",
         lambda _: None,
+    )
+    monkeypatch.setattr(
+        "desloppify.app.commands.helpers.state._sole_existing_lang_state_file",
+        lambda: None,
     )
     result = state_path(args)
     assert result is None
@@ -218,21 +227,16 @@ def test_require_completed_scan_none_last_scan(capsys):
 # ── subjective.py: print_subjective_followup ──────────────────────────
 
 
-def _make_followup(
-    *,
-    low_assessed: bool = False,
-    threshold_label: str = "60",
-    rendered: str = "dim1, dim2",
-    command: str = "desloppify review",
-    integrity_lines: list[tuple[str, str]] | None = None,
-) -> SimpleNamespace:
-    return SimpleNamespace(
-        low_assessed=low_assessed,
-        threshold_label=threshold_label,
-        rendered=rendered,
-        command=command,
-        integrity_lines=integrity_lines or [],
-    )
+def _make_followup(**overrides) -> SimpleNamespace:
+    payload = {
+        "low_assessed": False,
+        "threshold_label": "60",
+        "rendered": "dim1, dim2",
+        "command": "desloppify review",
+        "integrity_lines": [],
+    }
+    payload.update(overrides)
+    return SimpleNamespace(**payload)
 
 
 def test_subjective_followup_nothing_to_show(capsys):

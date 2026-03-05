@@ -6,10 +6,10 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from desloppify.core.query_paths import query_file_path
-from desloppify.core.output_contract import OutputResult
-from desloppify.core.query import write_query as _core_write_query
-from desloppify.core.output_api import colorize
+from desloppify.base.output.terminal import colorize
+from desloppify.base.output.contract import OutputResult
+from desloppify.base.search.query import write_query as _core_write_query
+from desloppify.base.search.query_paths import query_file_path
 
 
 @dataclass(frozen=True)

@@ -1,4 +1,4 @@
-"""Tests for desloppify.search and desloppify.versioning modules."""
+"""Tests for core.search.grep and core.tooling modules."""
 
 from __future__ import annotations
 
@@ -6,13 +6,13 @@ from unittest.mock import patch
 
 import pytest
 
-import desloppify.search as search_mod
-from desloppify.search import (
+import desloppify.base.search.grep as search_mod
+from desloppify.base.search.grep import (
     grep_count_files,
     grep_files,
     grep_files_containing,
 )
-from desloppify.versioning import check_tool_staleness, compute_tool_hash
+from desloppify.base.tooling import check_tool_staleness, compute_tool_hash
 
 # ── Fixtures ──────────────────────────────────────────────────
 
@@ -28,7 +28,7 @@ def fake_read(monkeypatch):
         def _read(filepath: str) -> str | None:
             return file_contents.get(filepath)
 
-        monkeypatch.setattr(search_mod, "read_file_text", _read)
+        monkeypatch.setattr(search_mod, "_read_file_text", _read)
         # Also make all paths resolve as absolute so PROJECT_ROOT fallback isn't needed
         monkeypatch.setattr(search_mod.os.path, "isabs", lambda p: True)
 
@@ -170,7 +170,7 @@ def test_compute_tool_hash_excludes_test_files(tmp_path):
     tests.mkdir()
     (tests / "test_core.py").write_text("assert True")
 
-    import desloppify.versioning as versioning_mod
+    import desloppify.base.tooling as versioning_mod
 
     with patch.object(versioning_mod, "TOOL_DIR", pkg):
         hash_with_test = compute_tool_hash()
@@ -190,7 +190,7 @@ def test_compute_tool_hash_changes_on_source_change(tmp_path):
     pkg.mkdir()
     (pkg / "core.py").write_text("x = 1")
 
-    import desloppify.versioning as versioning_mod
+    import desloppify.base.tooling as versioning_mod
 
     with patch.object(versioning_mod, "TOOL_DIR", pkg):
         hash_before = compute_tool_hash()
@@ -212,7 +212,7 @@ def test_compute_tool_hash_handles_unreadable_file(tmp_path):
     unreadable.write_text("content")
     unreadable.chmod(0o000)
 
-    import desloppify.versioning as versioning_mod
+    import desloppify.base.tooling as versioning_mod
 
     try:
         with patch.object(versioning_mod, "TOOL_DIR", pkg):
@@ -244,4 +244,4 @@ def test_check_tool_staleness_returns_warning_when_hash_differs():
     assert result is not None
     assert "Tool code changed" in result
     assert "000000000000" in result
-    assert "desloppify scan" in result
+    assert "next scan" in result

@@ -2,18 +2,32 @@
 
 from __future__ import annotations
 
-import copy
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, TypedDict
+from typing import TYPE_CHECKING, Any, Protocol
 
-from desloppify.core._internal.text_utils import is_numeric
 from desloppify.engine.detectors.base import FunctionInfo
+from desloppify.languages._framework.base.lang_config_runtime import (
+    clone_default,
+    coerce_value,
+    normalize_spec_values,
+    runtime_value,
+)
+from desloppify.languages._framework.base.types_shared import (
+    BoundaryRule,
+    CoverageStatus,
+    DetectorCoverageRecord,
+    DetectorCoverageStatus,
+    FixerConfig,
+    FixResult,
+    LangSecurityResult,
+    LangValueSpec,
+    ScanCoverageRecord,
+)
 
 if TYPE_CHECKING:
     from desloppify.engine.policy.zones import FileZoneMap, ZoneRule
-    from desloppify.languages._framework.runtime import LangRun
 
 # ---------------------------------------------------------------------------
 # Type aliases for complex Callable signatures used in LangConfig fields
@@ -27,103 +41,54 @@ FileFinder = Callable[[Path], list[str]]
 class DetectorPhase:
     """A single phase in the scan pipeline.
 
-    Each phase runs one or more detectors and returns normalized findings.
+    Each phase runs one or more detectors and returns normalized issues.
     The `run` function handles both detection AND normalization (converting
-    raw detector output to findings with tiers/confidence).
+    raw detector output to issues with tiers/confidence).
     """
 
     label: str
-    run: Callable[[Path, LangRun], tuple[list[dict[str, Any]], dict[str, int]]]
+    run: Callable[[Path, LangRuntimeContract], tuple[list[dict[str, Any]], dict[str, int]]]
     slow: bool = False
 
 
-@dataclass
-class FixResult:
-    """Return type for fixer wrappers that need to carry metadata."""
+class LangRuntimeContract(Protocol):
+    """Explicit runtime interface consumed by detector phases.
 
-    entries: list[dict]
-    skip_reasons: dict[str, int] = field(default_factory=dict)
+    This Protocol lives here (rather than in runtime.py) to avoid an import
+    cycle: runtime.py imports concrete types from this module, and
+    DetectorPhase.run references LangRuntimeContract in its signature.
+    """
 
+    name: str
+    extensions: list[str]
+    entry_patterns: list[str]
+    barrel_names: set[str]
+    external_test_dirs: list[str]
+    test_file_extensions: list[str]
+    review_low_value_pattern: object | None
+    file_finder: FileFinder | None
+    extract_functions: FunctionExtractor | None
+    get_area: Callable[[str], str] | None
+    build_dep_graph: DepGraphBuilder
+    detect_lang_security_detailed: Callable[[list[str], FileZoneMap | None], LangSecurityResult]
+    detect_private_imports: Callable[[dict, FileZoneMap | None], tuple[list[dict], int]]
+    large_threshold: int
+    complexity_threshold: int
+    props_threshold: int
 
-CoverageStatus = Literal["full", "reduced"]
+    zone_map: FileZoneMap | None
+    dep_graph: dict[str, dict[str, Any]] | None
+    complexity_map: dict[str, float]
+    review_cache: dict[str, Any]
+    review_max_age_days: int
+    detector_coverage: dict[str, DetectorCoverageRecord]
+    coverage_warnings: list[DetectorCoverageRecord]
 
+    def runtime_setting(self, key: str, default: Any = None) -> Any: ...
 
-class DetectorCoverageRecord(TypedDict, total=False):
-    """Persisted detector-level coverage confidence metadata."""
+    def runtime_option(self, key: str, default: Any = None) -> Any: ...
 
-    detector: str
-    status: CoverageStatus
-    confidence: float
-    summary: str
-    impact: str
-    remediation: str
-    tool: str
-    reason: str
-
-
-class ScanCoverageRecord(TypedDict, total=False):
-    """Persisted scan-level coverage snapshot for one language run."""
-
-    status: CoverageStatus
-    confidence: float
-    detectors: dict[str, DetectorCoverageRecord]
-    warnings: list[DetectorCoverageRecord]
-    updated_at: str
-
-
-@dataclass(frozen=True)
-class DetectorCoverageStatus:
-    """Coverage-confidence metadata for a detector in the current scan."""
-
-    detector: str
-    status: CoverageStatus
-    confidence: float = 1.0
-    summary: str = ""
-    impact: str = ""
-    remediation: str = ""
-    tool: str = ""
-    reason: str = ""
-
-
-@dataclass(frozen=True)
-class LangSecurityResult:
-    """Normalized return shape for language-specific security hooks."""
-
-    entries: list[dict]
-    files_scanned: int
-    coverage: DetectorCoverageStatus | None = None
-
-
-@dataclass
-class FixerConfig:
-    """Configuration for an auto-fixer."""
-
-    label: str
-    detect: Callable[[Path], list[dict]]
-    fix: Callable[..., FixResult | list[dict]]
-    detector: str  # finding detector name (for state resolution)
-    verb: str = "Fixed"
-    dry_verb: str = "Would fix"
-    # Signature: (path, state, prev_score, dry_run, *, lang=None) -> None
-    post_fix: Callable[..., None] | None = None
-
-
-@dataclass
-class BoundaryRule:
-    """A coupling boundary: `protected` dir should not be imported from `forbidden_from`."""
-
-    protected: str  # e.g. "shared/"
-    forbidden_from: str  # e.g. "tools/"
-    label: str  # e.g. "shared→tools"
-
-
-@dataclass(frozen=True)
-class LangValueSpec:
-    """Typed language option/setting schema entry."""
-
-    type: type
-    default: object
-    description: str = ""
+    def scan_coverage_prerequisites(self) -> list[DetectorCoverageStatus]: ...
 
 
 @dataclass
@@ -210,67 +175,14 @@ class LangConfig:
 
     @staticmethod
     def _clone_default(default: object) -> object:
-        return copy.deepcopy(default)
+        return clone_default(default)
 
     @classmethod
     def _coerce_value(cls, raw: object, expected: type, default: object) -> object:
-        """Best-effort coercion for config/CLI values."""
-        fallback = cls._clone_default(default)
-        if raw is None:
-            return fallback
-
-        if expected is bool:
-            if isinstance(raw, bool):
-                return raw
-            if isinstance(raw, str):
-                lowered = raw.strip().lower()
-                if lowered in {"1", "true", "yes", "on"}:
-                    return True
-                if lowered in {"0", "false", "no", "off"}:
-                    return False
-                return fallback
-            if is_numeric(raw):
-                return bool(raw)
-            return fallback
-
-        if expected is int:
-            if isinstance(raw, bool):
-                return fallback
-            if is_numeric(raw):
-                return int(raw)
-            try:
-                return int(raw)
-            except (TypeError, ValueError):
-                return fallback
-
-        if expected is float:
-            if isinstance(raw, bool):
-                return fallback
-            if is_numeric(raw):
-                return float(raw)
-            try:
-                return float(raw)
-            except (TypeError, ValueError):
-                return fallback
-
-        if expected is str:
-            return raw if isinstance(raw, str) else str(raw)
-
-        if expected is list:
-            return raw if isinstance(raw, list) else fallback
-
-        if expected is dict:
-            return raw if isinstance(raw, dict) else fallback
-
-        return raw if isinstance(raw, expected) else fallback
+        return coerce_value(raw, expected, default)
 
     def normalize_settings(self, values: dict[str, object] | None) -> dict[str, object]:
-        values = values if isinstance(values, dict) else {}
-        normalized: dict[str, object] = {}
-        for key, spec in self.setting_specs.items():
-            raw = values.get(key, spec.default)
-            normalized[key] = self._coerce_value(raw, spec.type, spec.default)
-        return normalized
+        return normalize_spec_values(values, self.setting_specs)
 
     def normalize_runtime_options(
         self,
@@ -278,19 +190,12 @@ class LangConfig:
         *,
         strict: bool = False,
     ) -> dict[str, object]:
-        values = values if isinstance(values, dict) else {}
-        specs = self.runtime_option_specs
-        if strict:
-            unknown = sorted(set(values) - set(specs))
-            if unknown:
-                raise KeyError(
-                    f"Unknown runtime option(s) for {self.name}: {', '.join(unknown)}"
-                )
-        normalized: dict[str, object] = {}
-        for key, spec in specs.items():
-            raw = values.get(key, spec.default)
-            normalized[key] = self._coerce_value(raw, spec.type, spec.default)
-        return normalized
+        return normalize_spec_values(
+            values,
+            self.runtime_option_specs,
+            strict=strict,
+            owner_name=self.name,
+        )
 
     def set_runtime_context(
         self,
@@ -306,27 +211,21 @@ class LangConfig:
 
     def runtime_setting(self, key: str, default: Any = None) -> Any:
         """Read setting from config-level runtime defaults."""
-        if key in self._default_runtime_settings:
-            return copy.deepcopy(self._default_runtime_settings[key])
-        spec = self.setting_specs.get(key)
-        if spec:
-            return copy.deepcopy(spec.default)
-        return default
+        return runtime_value(
+            self._default_runtime_settings,
+            self.setting_specs,
+            key,
+            default,
+        )
 
     def runtime_option(self, key: str, default: Any = None) -> Any:
         """Read option from config-level runtime defaults."""
-        if key in self._default_runtime_options:
-            return copy.deepcopy(self._default_runtime_options[key])
-        spec = self.runtime_option_specs.get(key)
-        if spec:
-            return copy.deepcopy(spec.default)
-        return default
-
-    def detect_lang_security(
-        self, files: list[str], zone_map: FileZoneMap | None
-    ) -> tuple[list[dict], int]:
-        """Language-specific security checks. Override in subclasses."""
-        return [], 0
+        return runtime_value(
+            self._default_runtime_options,
+            self.runtime_option_specs,
+            key,
+            default,
+        )
 
     def detect_lang_security_detailed(
         self,
@@ -334,8 +233,7 @@ class LangConfig:
         zone_map: FileZoneMap | None,
     ) -> LangSecurityResult:
         """Language-specific security checks with optional coverage metadata."""
-        entries, files_scanned = self.detect_lang_security(files, zone_map)
-        return LangSecurityResult(entries=entries, files_scanned=files_scanned)
+        return LangSecurityResult(entries=[], files_scanned=0)
 
     def detect_private_imports(
         self, graph: dict, zone_map: FileZoneMap | None
@@ -350,17 +248,18 @@ class LangConfig:
 
 __all__ = [
     "BoundaryRule",
-    "DetectorCoverageRecord",
     "CoverageStatus",
-    "DetectorCoverageStatus",
     "DepGraphBuilder",
+    "DetectorCoverageRecord",
+    "DetectorCoverageStatus",
     "DetectorPhase",
     "FileFinder",
     "FixerConfig",
     "FixResult",
     "FunctionExtractor",
     "LangConfig",
-    "ScanCoverageRecord",
+    "LangRuntimeContract",
     "LangSecurityResult",
     "LangValueSpec",
+    "ScanCoverageRecord",
 ]

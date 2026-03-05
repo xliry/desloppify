@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from desloppify.core._internal.text_utils import PROJECT_ROOT
+from desloppify.base.discovery.paths import get_project_root
 
 
 def read_file(filepath: str) -> str | None:
     """Read a file, returning None on error."""
-    path = Path(filepath) if Path(filepath).is_absolute() else PROJECT_ROOT / filepath
+    path = Path(filepath) if Path(filepath).is_absolute() else get_project_root() / filepath
     try:
         return path.read_text()
     except (OSError, UnicodeDecodeError):

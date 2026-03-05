@@ -11,8 +11,16 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 
-from desloppify.core.discovery_api import read_file_text, rel, resolve_path
-from desloppify.hook_registry import get_lang_hook
+from desloppify.base.discovery.file_paths import (
+
+    rel,
+
+    resolve_path,
+
+)
+
+from desloppify.base.discovery.source import read_file_text
+from desloppify.engine.hook_registry import get_lang_hook
 
 _LOW_VALUE_NAMES = re.compile(
     r"(?:^|/)(?:types|constants|enums|index)\.[a-z]+$|(?:^|/).+\.d\.[a-z]+$"
@@ -44,6 +52,80 @@ def _is_low_value_file(
         return bool(pattern.search(filepath))
     return bool(_LOW_VALUE_NAMES.search(filepath))
 
+def _check_file_review_status(
+    abs_path: str,
+    cached: dict | None,
+    loc: int,
+    now: datetime,
+    max_age_days: int,
+    holistic_fresh: bool,
+) -> dict | None:
+    """Check a single file's review status. Returns an entry dict or None."""
+    if cached is None:
+        if holistic_fresh:
+            return None
+        return {
+            "file": abs_path,
+            "name": "unreviewed",
+            "tier": 4,
+            "confidence": "low",
+            "summary": "No design review on record — run `desloppify review --prepare`",
+            "detail": {"reason": "unreviewed", "loc": loc},
+        }
+
+    # Check if content changed since review
+    current_hash = _hash_file(abs_path)
+    if current_hash and current_hash != cached.get("content_hash", ""):
+        return {
+            "file": abs_path,
+            "name": "changed",
+            "tier": 4,
+            "confidence": "medium",
+            "summary": "File changed since last review — re-review recommended",
+            "detail": {"reason": "changed", "loc": loc},
+        }
+
+    # max_age_days == 0 means "never" — reviews don't expire
+    if max_age_days == 0:
+        return None
+
+    # Check if review is stale (age expired)
+    reviewed_at = cached.get("reviewed_at", "")
+    if reviewed_at:
+        try:
+            reviewed = datetime.fromisoformat(reviewed_at)
+            age_days = (now - reviewed).days
+            if age_days > max_age_days:
+                return {
+                    "file": abs_path,
+                    "name": "stale",
+                    "tier": 4,
+                    "confidence": "low",
+                    "summary": f"Review is stale ({age_days} days old) — re-review recommended",
+                    "detail": {"reason": "stale", "age_days": age_days, "loc": loc},
+                }
+        except (ValueError, TypeError):
+            return {
+                "file": abs_path,
+                "name": "stale",
+                "tier": 4,
+                "confidence": "low",
+                "summary": "Review date unparseable — re-review recommended",
+                "detail": {"reason": "stale", "loc": loc},
+            }
+        return None
+
+    # No reviewed_at — treat as unreviewed
+    return {
+        "file": abs_path,
+        "name": "unreviewed",
+        "tier": 4,
+        "confidence": "low",
+        "summary": "No design review on record — run `desloppify review --prepare`",
+        "detail": {"reason": "unreviewed", "loc": loc},
+    }
+
+
 def detect_review_coverage(
     files: list[str],
     zone_map,
@@ -54,18 +136,7 @@ def detect_review_coverage(
     holistic_cache: dict | None = None,
     holistic_total_files: int | None = None,
 ) -> tuple[list[dict], int]:
-    """Detect production files missing or with stale design reviews.
-
-    Args:
-        files: list of file paths from file_finder
-        zone_map: FileZoneMap (or None)
-        review_cache: dict of {rel_path: {content_hash, reviewed_at, finding_count}}
-        lang_name: language plugin name (for low-value pattern matching)
-        max_age_days: reviews older than this are flagged as stale
-
-    Returns:
-        (entries, potential) where potential = count of reviewable production files.
-    """
+    """Detect production files missing reviews or carrying stale reviews."""
     now = datetime.now(UTC)
     entries: list[dict] = []
     candidates: list[tuple[str, str, int]] = []
@@ -115,90 +186,12 @@ def detect_review_coverage(
             )
 
     for abs_path, rpath, loc in candidates:
-
-        # Check review cache
         cached = review_cache.get(rpath)
-        if cached is None:
-            if holistic_fresh:
-                continue
-            entries.append(
-                {
-                    "file": abs_path,
-                    "name": "unreviewed",
-                    "tier": 4,
-                    "confidence": "low",
-                    "summary": "No design review on record — run `desloppify review --prepare`",
-                    "detail": {"reason": "unreviewed", "loc": loc},
-                }
-            )
-            continue
-
-        # Check if content changed since review
-        current_hash = _hash_file(abs_path)
-        if current_hash and current_hash != cached.get("content_hash", ""):
-            entries.append(
-                {
-                    "file": abs_path,
-                    "name": "changed",
-                    "tier": 4,
-                    "confidence": "medium",
-                    "summary": "File changed since last review — re-review recommended",
-                    "detail": {"reason": "changed", "loc": loc},
-                }
-            )
-            continue
-
-        # max_age_days == 0 means "never" — reviews don't expire
-        if max_age_days == 0:
-            continue
-
-        # Check if review is stale (age expired)
-        reviewed_at = cached.get("reviewed_at", "")
-        if reviewed_at:
-            try:
-                reviewed = datetime.fromisoformat(reviewed_at)
-                age_days = (now - reviewed).days
-                if age_days > max_age_days:
-                    entries.append(
-                        {
-                            "file": abs_path,
-                            "name": "stale",
-                            "tier": 4,
-                            "confidence": "low",
-                            "summary": f"Review is stale ({age_days} days old) — re-review recommended",
-                            "detail": {
-                                "reason": "stale",
-                                "age_days": age_days,
-                                "loc": loc,
-                            },
-                        }
-                    )
-                    continue
-            except (ValueError, TypeError):
-                # Can't parse date — treat as stale
-                entries.append(
-                    {
-                        "file": abs_path,
-                        "name": "stale",
-                        "tier": 4,
-                        "confidence": "low",
-                        "summary": "Review date unparseable — re-review recommended",
-                        "detail": {"reason": "stale", "loc": loc},
-                    }
-                )
-                continue
-        else:
-            # No reviewed_at — treat as unreviewed
-            entries.append(
-                {
-                    "file": abs_path,
-                    "name": "unreviewed",
-                    "tier": 4,
-                    "confidence": "low",
-                    "summary": "No design review on record — run `desloppify review --prepare`",
-                    "detail": {"reason": "unreviewed", "loc": loc},
-                }
-            )
+        entry = _check_file_review_status(
+            abs_path, cached, loc, now, max_age_days, holistic_fresh,
+        )
+        if entry is not None:
+            entries.append(entry)
 
     return entries, potential
 

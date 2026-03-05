@@ -29,7 +29,7 @@ def test_find_matching_brace_deeply_nested():
 
 
 def test_find_matching_brace_inner():
-    """Finding matching brace starting at inner open brace."""
+    """Issue matching brace starting at inner open brace."""
     content = "{ { inner } outer }"
     assert find_matching_brace(content, 2) == 10
 

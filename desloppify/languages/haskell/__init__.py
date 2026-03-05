@@ -21,3 +21,8 @@ generic_lang(
     detect_markers=["stack.yaml", "cabal.project"],
     treesitter_spec=HASKELL_SPEC,
 )
+
+__all__ = [
+    "generic_lang",
+    "HASKELL_SPEC",
+]

@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
-from desloppify.engine._plan.operations import (
-    move_items,
-    purge_ids,
+from desloppify.engine._plan.operations_cluster import (
+    add_to_cluster,
+    create_cluster,
+)
+from desloppify.engine._plan.operations_lifecycle import purge_ids
+from desloppify.engine._plan.operations_meta import append_log_entry
+from desloppify.engine._plan.operations_queue import move_items
+from desloppify.engine._plan.operations_skip import (
+    resurface_stale_skips,
     skip_items,
     unskip_items,
-    resurface_stale_skips,
 )
 from desloppify.engine._plan.reconcile import reconcile_plan_after_scan
 from desloppify.engine._plan.schema import (
@@ -15,7 +20,6 @@ from desloppify.engine._plan.schema import (
     ensure_plan_defaults,
     validate_plan,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -27,19 +31,19 @@ def _plan_with_queue(*ids: str) -> dict:
     return plan
 
 
-def _state_with_findings(*ids: str, status: str = "open") -> dict:
-    findings = {}
+def _state_with_issues(*ids: str, status: str = "open") -> dict:
+    issues = {}
     for fid in ids:
-        findings[fid] = {
+        issues[fid] = {
             "id": fid,
             "status": status,
             "detector": "test",
             "file": "test.py",
             "tier": 1,
             "confidence": "high",
-            "summary": f"Finding {fid}",
+            "summary": f"Issue {fid}",
         }
-    return {"findings": findings, "scan_count": 5}
+    return {"issues": issues, "scan_count": 5}
 
 
 # ---------------------------------------------------------------------------
@@ -214,7 +218,7 @@ def test_migration_deferred_to_skipped():
 def test_migration_deferred_does_not_overwrite_existing():
     plan = empty_plan()
     plan["deferred"] = ["x"]
-    plan["skipped"] = {"x": {"finding_id": "x", "kind": "permanent", "note": "existing"}}
+    plan["skipped"] = {"x": {"issue_id": "x", "kind": "permanent", "note": "existing"}}
     ensure_plan_defaults(plan)
     # x was already in skipped, should keep existing entry
     assert plan["skipped"]["x"]["kind"] == "permanent"
@@ -228,20 +232,20 @@ def test_migration_deferred_does_not_overwrite_existing():
 def test_validate_no_overlap_queue_skipped():
     plan = empty_plan()
     plan["queue_order"] = ["a"]
-    plan["skipped"] = {"a": {"finding_id": "a", "kind": "temporary"}}
+    plan["skipped"] = {"a": {"issue_id": "a", "kind": "temporary"}}
     try:
         validate_plan(plan)
-        assert False, "Should have raised ValueError"
+        raise AssertionError("Should have raised ValueError")
     except ValueError as exc:
         assert "queue_order and skipped" in str(exc)
 
 
 def test_validate_invalid_skip_kind():
     plan = empty_plan()
-    plan["skipped"] = {"a": {"finding_id": "a", "kind": "invalid_kind"}}
+    plan["skipped"] = {"a": {"issue_id": "a", "kind": "invalid_kind"}}
     try:
         validate_plan(plan)
-        assert False, "Should have raised ValueError"
+        raise AssertionError("Should have raised ValueError")
     except ValueError as exc:
         assert "invalid_kind" in str(exc)
 
@@ -254,7 +258,7 @@ def test_reconcile_supersedes_skipped_items():
     plan = _plan_with_queue()
     skip_items(plan, ["gone"], kind="temporary")
     # State where "gone" no longer exists
-    state = _state_with_findings("alive")
+    state = _state_with_issues("alive")
 
     result = reconcile_plan_after_scan(plan, state)
     assert "gone" in result.superseded
@@ -265,7 +269,7 @@ def test_reconcile_supersedes_skipped_items():
 def test_reconcile_resurfaced():
     plan = _plan_with_queue()
     skip_items(plan, ["a"], kind="temporary", review_after=2, scan_count=3)
-    state = _state_with_findings("a")
+    state = _state_with_issues("a")
     state["scan_count"] = 5  # 3+2 = 5, should resurface
 
     result = reconcile_plan_after_scan(plan, state)
@@ -304,3 +308,96 @@ def test_skip_and_unskip_roundtrip():
     assert plan["skipped"] == {}
 
 
+# ---------------------------------------------------------------------------
+# purge_ids clears override cluster ref
+# ---------------------------------------------------------------------------
+
+def test_purge_ids_clears_override_cluster_ref():
+    """purge_ids should clear the cluster field from overrides."""
+    plan = _plan_with_queue("a", "b")
+    ensure_plan_defaults(plan)
+    create_cluster(plan, "my-cluster")
+    add_to_cluster(plan, "my-cluster", ["a"])
+
+    assert plan["overrides"]["a"]["cluster"] == "my-cluster"
+
+    purged = purge_ids(plan, ["a"])
+    assert purged == 1
+    # Override still exists (notes kept for history) but cluster cleared
+    assert plan["overrides"]["a"]["cluster"] is None
+
+
+# ---------------------------------------------------------------------------
+# append_log_entry
+# ---------------------------------------------------------------------------
+
+def test_append_log_entry_basic():
+    plan = empty_plan()
+    append_log_entry(plan, "done", issue_ids=["a", "b"], actor="user", note="test note")
+    log = plan["execution_log"]
+    assert len(log) == 1
+    entry = log[0]
+    assert entry["action"] == "done"
+    assert entry["issue_ids"] == ["a", "b"]
+    assert entry["actor"] == "user"
+    assert entry["note"] == "test note"
+    assert "timestamp" in entry
+
+
+def test_append_log_entry_caps_at_default(monkeypatch):
+    import desloppify.engine._plan.operations_meta as ops_meta_mod
+
+    cap = 500
+    monkeypatch.setattr(ops_meta_mod, "_get_log_cap", lambda: cap)
+
+    plan = empty_plan()
+    for i in range(cap + 10):
+        append_log_entry(plan, "test", issue_ids=[str(i)], actor="user")
+
+    log = plan["execution_log"]
+    assert len(log) == cap
+    # Oldest entries should have been dropped
+    assert log[0]["issue_ids"] == ["10"]
+    assert log[-1]["issue_ids"] == [str(cap + 9)]
+
+
+def test_append_log_entry_uncapped(monkeypatch):
+    import desloppify.engine._plan.operations_meta as ops_meta_mod
+
+    monkeypatch.setattr(ops_meta_mod, "_get_log_cap", lambda: 0)
+
+    plan = empty_plan()
+    total = 600
+    for i in range(total):
+        append_log_entry(plan, "test", issue_ids=[str(i)], actor="user")
+
+    assert len(plan["execution_log"]) == total
+
+
+def test_append_log_entry_custom_cap(monkeypatch):
+    import desloppify.engine._plan.operations_meta as ops_meta_mod
+
+    monkeypatch.setattr(ops_meta_mod, "_get_log_cap", lambda: 50)
+
+    plan = empty_plan()
+    for i in range(60):
+        append_log_entry(plan, "test", issue_ids=[str(i)], actor="user")
+
+    assert len(plan["execution_log"]) == 50
+    assert plan["execution_log"][0]["issue_ids"] == ["10"]
+
+
+def test_append_log_entry_with_cluster_and_detail():
+    plan = empty_plan()
+    append_log_entry(
+        plan,
+        "cluster_done",
+        issue_ids=["a"],
+        cluster_name="auto/unused",
+        actor="agent",
+        detail={"method": "bulk"},
+    )
+    entry = plan["execution_log"][0]
+    assert entry["cluster_name"] == "auto/unused"
+    assert entry["detail"] == {"method": "bulk"}
+    assert entry["actor"] == "agent"

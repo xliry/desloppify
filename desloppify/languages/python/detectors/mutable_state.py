@@ -7,8 +7,8 @@ import logging
 import re
 from pathlib import Path
 
-from desloppify.core._internal.text_utils import PROJECT_ROOT
-from desloppify.core.discovery_api import find_py_files
+from desloppify.base.discovery.source import find_py_files
+from desloppify.base.discovery.paths import get_project_root
 
 logger = logging.getLogger(__name__)
 
@@ -52,31 +52,39 @@ def _is_upper_case(name: str) -> bool:
     return bool(re.match(r"^_?[A-Z][A-Z0-9_]+$", name))
 
 
+
 def _collect_module_level_mutables(tree: ast.Module) -> dict[str, int]:
     """Collect module-level names initialized to mutable values.
 
-    Returns {name: lineno} for names that are NOT UPPER_CASE constants.
+    UPPER_CASE names with truly immutable values (strings, ints, tuples,
+    frozensets) are already filtered out by ``_is_mutable_init()``.
+    UPPER_CASE mutable containers (``REGISTRY = {}``, ``ITEMS = []``) are
+    included — they represent runtime-mutated registries, not constants.
     """
     mutables: dict[str, int] = {}
     for stmt in tree.body:
         if isinstance(stmt, ast.Assign):
             for target in stmt.targets:
                 if isinstance(target, ast.Name) and _is_mutable_init(stmt.value):
-                    if not _is_upper_case(target.id):
-                        mutables[target.id] = stmt.lineno
+                    if _is_upper_case(target.id) and isinstance(stmt.value, ast.Constant):
+                        continue
+                    mutables[target.id] = stmt.lineno
         elif (
             isinstance(stmt, ast.AnnAssign)
             and stmt.target
             and isinstance(stmt.target, ast.Name)
         ):
             name = stmt.target.id
-            if _is_upper_case(name):
-                continue
-            # Annotated with Optional or assigned to mutable
+            # Mutable initializer → always include regardless of case.
             if stmt.value is not None and _is_mutable_init(stmt.value):
+                if _is_upper_case(name) and isinstance(stmt.value, ast.Constant):
+                    continue
                 mutables[name] = stmt.lineno
             elif _is_optional_annotation(stmt.annotation):
-                mutables[name] = stmt.lineno
+                # Optional without mutable init — exempt UPPER_CASE
+                # (likely a sentinel, not a mutable registry).
+                if not _is_upper_case(name):
+                    mutables[name] = stmt.lineno
     return mutables
 
 
@@ -218,7 +226,7 @@ def _detect_stale_imports(
             p = (
                 Path(filepath)
                 if Path(filepath).is_absolute()
-                else PROJECT_ROOT / filepath
+                else get_project_root() / filepath
             )
             content = p.read_text()
         except (OSError, UnicodeDecodeError) as exc:
@@ -289,7 +297,7 @@ def detect_global_mutable_config(path: Path) -> tuple[list[dict], int]:
             p = (
                 Path(filepath)
                 if Path(filepath).is_absolute()
-                else PROJECT_ROOT / filepath
+                else get_project_root() / filepath
             )
             content = p.read_text()
         except (OSError, UnicodeDecodeError) as exc:

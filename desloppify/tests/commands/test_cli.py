@@ -17,7 +17,7 @@ from desloppify.app.commands.helpers.runtime_options import (
     LangRuntimeOptionsError,
     resolve_lang_runtime_options,
 )
-from desloppify.app.commands.helpers.score import (
+from desloppify.base.config import (
     coerce_target_score,
     target_strict_score_from_config,
 )
@@ -144,13 +144,7 @@ class TestCreateParser:
     def test_next_command(self, parser):
         args = parser.parse_args(["next"])
         assert args.command == "next"
-        assert args.tier is None
         assert args.count == 1
-
-    def test_next_with_tier_and_count(self, parser):
-        args = parser.parse_args(["next", "--tier", "2", "--count", "5"])
-        assert args.tier == 2
-        assert args.count == 5
 
     def test_next_with_scope_status_group_and_format(self, parser):
         args = parser.parse_args(
@@ -171,29 +165,21 @@ class TestCreateParser:
         assert args.group == "file"
         assert args.format == "md"
 
-    def test_next_with_explain_and_no_tier_fallback(self, parser):
-        args = parser.parse_args(
-            ["next", "--tier", "4", "--explain", "--no-tier-fallback"]
-        )
-        assert args.tier == 4
-        assert args.explain is True
-        assert args.no_tier_fallback is True
-
-    def test_plan_done_command(self, parser):
-        args = parser.parse_args(["plan", "done", "id1", "id2"])
+    def test_plan_resolve_command(self, parser):
+        args = parser.parse_args(["plan", "resolve", "id1", "id2"])
         assert args.command == "plan"
-        assert args.plan_action == "done"
+        assert args.plan_action == "resolve"
         assert args.patterns == ["id1", "id2"]
 
-    def test_plan_done_with_note(self, parser):
-        args = parser.parse_args(["plan", "done", "id1", "--note", "removed import"])
+    def test_plan_resolve_with_note(self, parser):
+        args = parser.parse_args(["plan", "resolve", "id1", "--note", "removed import"])
         assert args.note == "removed import"
 
-    def test_plan_done_with_attest(self, parser):
+    def test_plan_resolve_with_attest(self, parser):
         args = parser.parse_args(
             [
                 "plan",
-                "done",
+                "resolve",
                 "id1",
                 "--attest",
                 "I have actually fixed this and I am not gaming",
@@ -208,15 +194,15 @@ class TestCreateParser:
         with pytest.raises(SystemExit):
             parser.parse_args(["resolve", "fixed", "id1"])
 
-    def test_ignore_command(self, parser):
-        args = parser.parse_args(["ignore", "smells::*::async_no_await"])
-        assert args.command == "ignore"
+    def test_suppress_command(self, parser):
+        args = parser.parse_args(["suppress", "smells::*::async_no_await"])
+        assert args.command == "suppress"
         assert args.pattern == "smells::*::async_no_await"
 
-    def test_ignore_with_attest(self, parser):
+    def test_suppress_with_attest(self, parser):
         args = parser.parse_args(
             [
-                "ignore",
+                "suppress",
                 "smells::*::async_no_await",
                 "--attest",
                 "I have actually reviewed this and I am not gaming",
@@ -224,15 +210,24 @@ class TestCreateParser:
         )
         assert args.attest is not None
 
-    def test_fix_command(self, parser):
-        args = parser.parse_args(["fix", "unused_imports", "--dry-run"])
-        assert args.command == "fix"
+    def test_autofix_command(self, parser):
+        args = parser.parse_args(["autofix", "unused_imports", "--dry-run"])
+        assert args.command == "autofix"
         assert args.fixer == "unused_imports"
         assert args.dry_run is True
 
     def test_plan_command(self, parser):
         args = parser.parse_args(["plan"])
         assert args.command == "plan"
+
+    def test_plan_triage_parses_flags(self, parser):
+        args = parser.parse_args(
+            ["plan", "triage", "--stage", "observe", "--report", "analysis"]
+        )
+        assert args.command == "plan"
+        assert args.plan_action == "triage"
+        assert args.stage == "observe"
+        assert args.report == "analysis"
 
     def test_plan_with_output(self, parser):
         args = parser.parse_args(["plan", "--output", "plan.md"])
@@ -258,14 +253,14 @@ class TestCreateParser:
                 "--min-loc",
                 "100",
                 "--sort",
-                "findings",
+                "issues",
                 "--detail",
             ]
         )
         assert args.depth == 4
         assert args.focus == "shared/components"
         assert args.min_loc == 100
-        assert args.sort == "findings"
+        assert args.sort == "issues"
         assert args.detail is True
 
     def test_detect_command(self, parser):
@@ -347,13 +342,13 @@ class TestCreateParser:
         assert args.prepare is True
 
     def test_review_allow_partial_flag(self, parser):
-        args = parser.parse_args(["review", "--import", "findings.json", "--allow-partial"])
-        assert args.import_file == "findings.json"
+        args = parser.parse_args(["review", "--import", "issues.json", "--allow-partial"])
+        assert args.import_file == "issues.json"
         assert args.allow_partial is True
 
     def test_review_validate_import_flag(self, parser):
-        args = parser.parse_args(["review", "--validate-import", "findings.json"])
-        assert args.validate_import_file == "findings.json"
+        args = parser.parse_args(["review", "--validate-import", "issues.json"])
+        assert args.validate_import_file == "issues.json"
 
     def test_review_external_start_flag(self, parser):
         args = parser.parse_args(
@@ -378,19 +373,19 @@ class TestCreateParser:
                 "--session-id",
                 "ext_20260223_000000_deadbeef",
                 "--import",
-                "findings.json",
+                "issues.json",
             ]
         )
         assert args.external_submit is True
         assert args.session_id == "ext_20260223_000000_deadbeef"
-        assert args.import_file == "findings.json"
+        assert args.import_file == "issues.json"
 
     def test_review_manual_override_flag(self, parser):
         args = parser.parse_args(
             [
                 "review",
                 "--import",
-                "findings.json",
+                "issues.json",
                 "--manual-override",
                 "--attest",
                 "manual calibration justified by independent reviewer output",
@@ -404,7 +399,7 @@ class TestCreateParser:
             [
                 "review",
                 "--import",
-                "findings.json",
+                "issues.json",
                 "--attested-external",
                 "--attest",
                 "I validated this review was completed without awareness of overall score and is unbiased.",
@@ -488,9 +483,9 @@ class TestCreateParser:
         assert args.no_badge is True
         assert args.badge_path == "custom.png"
 
-    def test_missing_command_raises(self, parser):
-        with pytest.raises(SystemExit):
-            parser.parse_args([])
+    def test_missing_command_defaults_to_none(self, parser):
+        args = parser.parse_args([])
+        assert args.command is None
 
     def test_invalid_resolve_status_raises(self, parser):
         with pytest.raises(SystemExit):
@@ -513,6 +508,33 @@ class TestDetectorNames:
         for name in ["logs", "unused", "smells", "cycles", "dupes"]:
             assert name in names
 
+    def test_runtime_detector_registration_invalidates_cached_detector_names(self):
+        from desloppify.base.registry import (
+            _DISPLAY_ORDER,
+            DETECTORS,
+            DetectorMeta,
+            register_detector,
+        )
+
+        test_detector = "_test_cli_cache_refresh"
+        cli_mod._DETECTOR_NAMES_CACHE["names"] = ["stale_only"]
+        register_detector(
+            DetectorMeta(
+                name=test_detector,
+                display="cache-refresh",
+                dimension="Code quality",
+                action_type="manual_fix",
+                guidance="cache refresh regression test",
+            )
+        )
+        assert "names" not in cli_mod._DETECTOR_NAMES_CACHE
+        assert test_detector in _get_detector_names()
+
+        # Cleanup dynamic detector mutation for test isolation.
+        DETECTORS.pop(test_detector, None)
+        if test_detector in _DISPLAY_ORDER:
+            _DISPLAY_ORDER.remove(test_detector)
+
 
 # ===========================================================================
 # state_path
@@ -524,12 +546,13 @@ class TestStatePath:
         """state_path auto-detects language and returns lang-specific path."""
         args = SimpleNamespace()
         # When auto_detect_lang finds a language, state_path returns lang-specific path
-        with patch("desloppify.languages.auto_detect_lang", return_value="python"):
+        with patch("desloppify.app.commands.helpers.state.auto_detect_lang_name", return_value="python"):
             result = state_path(args)
             assert result is not None
             assert "state-python.json" in str(result)
         # When auto_detect_lang finds nothing, state_path returns None
-        with patch("desloppify.languages.auto_detect_lang", return_value=None):
+        with patch("desloppify.app.commands.helpers.state.auto_detect_lang_name", return_value=None), \
+             patch("desloppify.app.commands.helpers.state._sole_existing_lang_state_file", return_value=None):
             result = state_path(args)
             assert result is None
 
@@ -557,7 +580,10 @@ class TestStatePath:
         state_dir.mkdir()
         existing = state_dir / "state-typescript.json"
         existing.write_text("{}")
-        monkeypatch.setattr("desloppify.app.commands.helpers.state.PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(
+            "desloppify.app.commands.helpers.state.get_project_root",
+            lambda: tmp_path,
+        )
 
         args = SimpleNamespace(state=None, lang="python", command="status")
         result = state_path(args)
@@ -567,7 +593,10 @@ class TestStatePath:
         state_dir = tmp_path / ".desloppify"
         state_dir.mkdir()
         (state_dir / "state-typescript.json").write_text("{}")
-        monkeypatch.setattr("desloppify.app.commands.helpers.state.PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(
+            "desloppify.app.commands.helpers.state.get_project_root",
+            lambda: tmp_path,
+        )
 
         args = SimpleNamespace(state=None, lang="python", command="scan")
         result = state_path(args)
@@ -580,7 +609,10 @@ class TestStatePath:
         state_dir.mkdir()
         existing = state_dir / "state-python.json"
         existing.write_text("{}")
-        monkeypatch.setattr("desloppify.app.commands.helpers.state.PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(
+            "desloppify.app.commands.helpers.state.get_project_root",
+            lambda: tmp_path,
+        )
         monkeypatch.setattr(
             "desloppify.app.commands.helpers.state.auto_detect_lang_name",
             lambda _args: None,
@@ -597,7 +629,10 @@ class TestStatePath:
         state_dir.mkdir()
         (state_dir / "state-python.json").write_text("{}")
         (state_dir / "state-typescript.json").write_text("{}")
-        monkeypatch.setattr("desloppify.app.commands.helpers.state.PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(
+            "desloppify.app.commands.helpers.state.get_project_root",
+            lambda: tmp_path,
+        )
 
         args = SimpleNamespace(state=None, lang="csharp", command="status")
         result = state_path(args)
@@ -620,9 +655,10 @@ class TestResolveDefaultPath:
         (project_root / "server.ts").write_text("export {}")
         saved_state = {"scan_path": "."}  # scan was run with --path .
 
-        monkeypatch.setattr(cli_mod, "PROJECT_ROOT", project_root)
+        monkeypatch.setattr(cli_mod, "get_project_root", lambda: project_root)
         monkeypatch.setattr(
-            "desloppify.app.commands.helpers.state.PROJECT_ROOT", project_root
+            "desloppify.app.commands.helpers.state.get_project_root",
+            lambda: project_root,
         )
 
         with (
@@ -695,8 +731,7 @@ class TestResolveLang:
         ts_src.mkdir()
         (ts_src / "index.ts").write_text("export const x = 1\n")
 
-        monkeypatch.setattr(lang_helpers_mod, "PROJECT_ROOT", cwd_root)
-        monkeypatch.setattr("desloppify.utils.PROJECT_ROOT", cwd_root)
+        monkeypatch.setattr(lang_helpers_mod, "get_project_root", lambda: cwd_root)
         args = SimpleNamespace(lang=None, path=str(target_root))
         lang = resolve_lang(args)
         assert lang is not None
@@ -712,8 +747,7 @@ class TestResolveLang:
         src.mkdir()
         (src / "main.py").write_text("print('x')\n")
 
-        monkeypatch.setattr(lang_helpers_mod, "PROJECT_ROOT", root)
-        monkeypatch.setattr("desloppify.utils.PROJECT_ROOT", root)
+        monkeypatch.setattr(lang_helpers_mod, "get_project_root", lambda: root)
         args = SimpleNamespace(lang=None, path=str(src))
         lang = resolve_lang(args)
         assert lang is not None
@@ -736,8 +770,7 @@ class TestResolveLang:
         target_src.mkdir()
         (target_src / "index.ts").write_text("export const x = 1\n")
 
-        monkeypatch.setattr(lang_helpers_mod, "PROJECT_ROOT", cwd_root)
-        monkeypatch.setattr("desloppify.utils.PROJECT_ROOT", cwd_root)
+        monkeypatch.setattr(lang_helpers_mod, "get_project_root", lambda: cwd_root)
         args = SimpleNamespace(lang=None, path=str(target_src))
         lang = resolve_lang(args)
         assert lang is not None
@@ -760,8 +793,7 @@ class TestResolveLang:
         for i in range(2):
             (py_dir / f"job_{i}.py").write_text("print('x')\n")
 
-        monkeypatch.setattr(lang_helpers_mod, "PROJECT_ROOT", root)
-        monkeypatch.setattr("desloppify.utils.PROJECT_ROOT", root)
+        monkeypatch.setattr(lang_helpers_mod, "get_project_root", lambda: root)
 
         # Path points to python subtree; detection should use this subtree first,
         # not the entire repo where TypeScript files are more numerous.
@@ -795,7 +827,7 @@ class TestResolveLang:
         target_src = target_root / "src"
         target_src.mkdir()
 
-        monkeypatch.setattr(lang_helpers_mod, "PROJECT_ROOT", cwd_root)
+        monkeypatch.setattr(lang_helpers_mod, "get_project_root", lambda: cwd_root)
         monkeypatch.setattr(
             lang_helpers_mod, "_lang_config_markers", lambda: ("deno.json",)
         )

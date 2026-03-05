@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import os
 
-from desloppify.core._internal.text_utils import PROJECT_ROOT
+from desloppify.base.discovery.paths import get_project_root
 from desloppify.engine.policy.zones import FileZoneMap, Zone
 
 from .heuristics import _has_testable_logic, _is_runtime_entrypoint
@@ -17,7 +17,7 @@ _MAX_NO_TESTS_ENTRIES = 50
 
 def _normalize_graph_paths(graph: dict) -> dict:
     """Normalize graph paths to relative paths."""
-    root_prefix = str(PROJECT_ROOT) + os.sep
+    root_prefix = str(get_project_root()) + os.sep
 
     def _to_rel(path: str) -> str:
         return path[len(root_prefix) :] if path.startswith(root_prefix) else path
@@ -44,7 +44,7 @@ def _discover_scorable_and_tests(
     extra_test_files: set[str] | None,
 ) -> tuple[set[str], set[str], set[str], int]:
     """Return (production_files, test_files, scorable_files, potential)."""
-    root_prefix = str(PROJECT_ROOT) + os.sep
+    root_prefix = str(get_project_root()) + os.sep
 
     def _to_rel(path: str) -> str:
         return path[len(root_prefix) :] if path.startswith(root_prefix) else path
@@ -66,13 +66,13 @@ def _discover_scorable_and_tests(
     return production_files, test_files, scorable, potential
 
 
-def _no_tests_findings(
+def _no_tests_issues(
     scorable: set[str],
     graph: dict,
     lang_name: str,
     complexity_map: dict[str, float] | None = None,
 ) -> list[dict]:
-    """Generate findings when there are zero test files."""
+    """Generate issues when there are zero test files."""
     cmap = complexity_map or {}
     by_loc = sorted(scorable, key=lambda f: -_file_loc(f))
     entries = []

@@ -38,7 +38,7 @@ def test_detects_variance_across_files():
 
 
 def test_no_variance_identical_signatures():
-    """Identical signatures across 3+ files produce no findings."""
+    """Identical signatures across 3+ files produce no issues."""
     functions = [
         _fn("process", "a.py", ["data", "strict"]),
         _fn("process", "b.py", ["data", "strict"]),
@@ -102,9 +102,9 @@ def test_phase_pattern_grouping_detects_variance_for_private_phase_functions():
         _fn("_phase_unused", "lang/python/phases.py", ["path", "lang"],
             return_annotation="tuple[list[dict], dict[str, int]]"),
         _fn("_phase_smells", "lang/typescript/phases.py", ["path", "lang"],
-            return_annotation="tuple[list[Finding], dict[str, int]]"),
+            return_annotation="tuple[list[Issue], dict[str, int]]"),
         _fn("phase_dupes", "lang/base.py", ["path", "lang"],
-            return_annotation="tuple[list[Finding], dict[str, int]]"),
+            return_annotation="tuple[list[Issue], dict[str, int]]"),
     ]
     entries, _ = detect_signature_variance(functions, min_occurrences=3)
     phase_entries = [e for e in entries if e["name"] == "phase_*" and e["group_type"] == "pattern"]

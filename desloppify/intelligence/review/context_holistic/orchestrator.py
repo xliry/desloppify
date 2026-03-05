@@ -4,12 +4,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from desloppify.core.discovery_api import (
+from desloppify.base.discovery.file_paths import rel
+
+from desloppify.base.discovery.source import (
+
     disable_file_cache,
+
     enable_file_cache,
+
     is_file_cache_enabled,
-    rel,
+
 )
+from desloppify.intelligence.review._context.models import HolisticContext
 from desloppify.intelligence.review._context.structure import (
     compute_structure_context,
 )
@@ -33,7 +39,6 @@ from .selection import (
     _testing_context,
     select_holistic_files,
 )
-from .types import HolisticContext
 
 
 def build_holistic_context(
@@ -48,7 +53,7 @@ def build_holistic_context(
 
 def build_holistic_context_model(
     path: Path,
-    lang,
+    lang: object,
     state: dict,
     files: list[str] | None = None,
 ) -> HolisticContext:
@@ -66,7 +71,7 @@ def build_holistic_context_model(
 
 
 def _build_holistic_context_inner(
-    path: Path, files: list[str], lang, state: dict
+    path: Path, files: list[str], lang: object, state: dict
 ) -> HolisticContext:
     """Inner holistic context builder (runs with file cache enabled)."""
     file_contents = _read_file_contents(files)
@@ -140,5 +145,5 @@ def _enrich_sections_from_evidence(
         context.conventions["duplicate_clusters"] = evidence["duplicate_clusters"]
     if "naming_drift" in evidence:
         context.conventions["naming_drift"] = evidence["naming_drift"]
-    if "flat_dir_findings" in evidence:
-        context.structure["flat_dir_findings"] = evidence["flat_dir_findings"]
+    if "flat_dir_issues" in evidence:
+        context.structure["flat_dir_issues"] = evidence["flat_dir_issues"]

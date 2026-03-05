@@ -20,3 +20,8 @@ generic_lang(
     detect_markers=["dune-project", "opam"],
     treesitter_spec=OCAML_SPEC,
 )
+
+__all__ = [
+    "generic_lang",
+    "OCAML_SPEC",
+]

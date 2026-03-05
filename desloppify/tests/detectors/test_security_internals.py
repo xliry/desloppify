@@ -236,7 +236,7 @@ def test_detect_security_issues_comment_lines_skipped(tmp_path):
     f.write_text("# verify = False  (just a comment, not real code)\n")
     entries, scanned = detect_security_issues([str(f)], None, "python")
     assert scanned == 1
-    # The comment should be skipped, so no findings
+    # The comment should be skipped, so no issues
     assert entries == []
 
 

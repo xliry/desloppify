@@ -5,8 +5,8 @@ from __future__ import annotations
 import importlib
 from types import SimpleNamespace
 
-import desloppify.hook_registry as registry_mod
-from desloppify.hook_registry import clear_lang_hooks_for_tests, get_lang_hook
+import desloppify.engine.hook_registry as registry_mod
+from desloppify.engine.hook_registry import clear_lang_hooks_for_tests, get_lang_hook
 
 
 def test_get_lang_hook_lazy_loads_language_hooks() -> None:

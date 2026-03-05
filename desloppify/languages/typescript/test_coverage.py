@@ -7,9 +7,10 @@ import os
 import re
 from pathlib import Path
 
-from desloppify.core._internal.text_utils import PROJECT_ROOT, strip_c_style_comments
-from desloppify.core.fallbacks import log_best_effort_failure
-from desloppify.core.paths_api import SRC_PATH
+from desloppify.base.output.fallbacks import log_best_effort_failure
+from desloppify.base.discovery.paths import SRC_PATH
+from desloppify.base.discovery.paths import get_project_root
+from desloppify.base.text_utils import strip_c_style_comments
 
 TS_IMPORT_RE = re.compile(
     r"""(?:\bfrom\s+|\bimport\s*\(\s*|\bimport\s+)(?:type\s+)?['\"]([^'\"]+)['\"]""",
@@ -72,7 +73,7 @@ logger = logging.getLogger(__name__)
 def _relative_if_under_root(path_str: str) -> str:
     """Return project-relative path when possible; else return original."""
     try:
-        return str(Path(path_str).resolve().relative_to(PROJECT_ROOT)).replace("\\", "/")
+        return str(Path(path_str).resolve().relative_to(get_project_root())).replace("\\", "/")
     except (OSError, ValueError):
         return path_str
 

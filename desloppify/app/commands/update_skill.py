@@ -6,8 +6,10 @@ import argparse
 import urllib.error
 import urllib.request
 
-from desloppify.core._internal.text_utils import get_project_root
-from desloppify.core.skill_docs import (
+from desloppify.base.output.terminal import colorize
+from desloppify.base.discovery.file_paths import safe_write_text
+from desloppify.base.discovery.paths import get_project_root
+from desloppify.app.skill_docs import (
     SKILL_BEGIN,
     SKILL_END,
     SKILL_TARGETS,
@@ -16,7 +18,6 @@ from desloppify.core.skill_docs import (
     SkillInstall,
     find_installed_skill,
 )
-from desloppify.core.output_api import colorize
 
 _RAW_BASE = (
     "https://raw.githubusercontent.com/peteromallet/desloppify/main/docs"
@@ -114,7 +115,7 @@ def update_installed_skill(interface: str) -> bool:
     else:
         result = new_section
 
-    target_path.write_text(result, encoding="utf-8")
+    safe_write_text(target_path, result)
 
     version_match = SKILL_VERSION_RE.search(new_section)
     version = version_match.group(1) if version_match else "?"
