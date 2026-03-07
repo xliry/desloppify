@@ -1,0 +1,72 @@
+{
+  "submitter": "agustif",
+  "comment_id": 4000584288,
+  "verdict": "YES_WITH_CAVEATS",
+  "verdict_date": "2026-03-07",
+  "scoreboard_id": "S006",
+  "claim_restated": "Plan persistence uses a destructive read-path migration strategy: (1) newer-version plans are warned about but still mutated via ensure_plan_defaults (persistence.py:58-67), (2) ensure_plan_defaults always runs _upgrade_plan_to_v7 on every load (schema.py:198), (3) migration coerces wrong-shaped fields to empty containers (schema_migrations.py:25,30,42) and force-sets version to v7 even for newer input (schema_migrations.py:304), (4) if invariants still fail after coercion, the plan is dropped to empty_plan (persistence.py:69-73), (5) downstream flows like scan preflight can save the coerced result (preflight.py:47-50), making data loss durable. A related fail-open pattern exists in state persistence (state/schema.py:401,431; state/persistence.py:128,138).",
+  "is_poor_engineering": true,
+  "why_poor_engineering": "The version downgrade (v8+ forced to v7) and container coercion (wrong-shaped fields silently replaced with empty containers) create a destructive read-path migration that can erase user intent from plan data. In a planning tool where queue order, clusters, and skip decisions represent deliberate user choices, silently coercing or resetting this data undermines auditability and trust.",
+  "is_significant": true,
+  "why_missed": {
+    "what_should_catch": "A forward-compatibility test that round-trips a plan with version > PLAN_VERSION through load_plan and verifies no data loss, plus a migration idempotency test ensuring _upgrade_plan_to_v7 does not mutate already-valid v7 plans.",
+    "why_not_caught": "The migration code was written for backward compatibility (upgrading old plans to v7) and was never tested against forward-version plans. The version force-set on line 304 was intended as a normalization step, not considered as a downgrade vector.",
+    "what_could_catch": "A CI test that creates a plan with version=PLAN_VERSION+1 and extra fields, loads it via load_plan, and asserts that unknown fields are preserved and version is not downgraded. Also a schema-evolution policy requiring explicit handling of unknown versions (refuse to load, or load read-only)."
+  },
+  "scores": {
+    "signal": 5,
+    "originality": 4,
+    "core_impact": 1,
+    "overall": 4
+  },
+  "claims": [
+    {
+      "id": "claim-1",
+      "title": "Newer-version plans are warned then mutated",
+      "status": "CONFIRMED",
+      "detail": "persistence.py:58-65 warns about version > PLAN_VERSION but continues to line 67 where ensure_plan_defaults mutates the data unconditionally."
+    },
+    {
+      "id": "claim-2",
+      "title": "ensure_plan_defaults always runs migration on read",
+      "status": "CONFIRMED",
+      "detail": "schema.py:190-198: ensure_plan_defaults calls _upgrade_plan_to_v7(plan) on every load, regardless of the plan's actual version."
+    },
+    {
+      "id": "claim-3",
+      "title": "Migration coerces wrong shapes to empty containers and force-sets v7",
+      "status": "CONFIRMED",
+      "detail": "schema_migrations.py:19-26 (_ensure_container) replaces non-matching types with empty defaults. Line 304-306 force-sets version to V7_SCHEMA_VERSION even if the plan was v8+, effectively downgrading it."
+    },
+    {
+      "id": "claim-4",
+      "title": "Invariant failure drops to empty plan",
+      "status": "CONFIRMED",
+      "detail": "persistence.py:68-73: validate_plan ValueError causes return empty_plan(), discarding all user intent. Overlaps with S309 Claim 1."
+    },
+    {
+      "id": "claim-5",
+      "title": "Normal flows save the coerced result durably",
+      "status": "PARTIALLY_CONFIRMED",
+      "detail": "load_plan does not auto-save; save only happens when downstream code explicitly calls save_plan (e.g. preflight.py:47-50 conditionally). The concern is directionally correct but overstated — not every load triggers a durable write."
+    },
+    {
+      "id": "claim-6",
+      "title": "Related fail-open pattern in state persistence",
+      "status": "CONFIRMED",
+      "detail": "state/schema.py:400-431 coerces fields; state/persistence.py:126-138 falls back to empty_state on normalization failure. Same pattern as plan persistence. Overlaps with S309 Claim 1."
+    }
+  ],
+  "overlap_with": [
+    {
+      "submission": "S309",
+      "author": "lee101",
+      "overlap_description": "S309 covers the fail-open persistence pattern (falling back to empty state/plan on corruption). S006 claims 4 and 6 directly overlap. However, S006 claims 1-3 (version downgrade, container coercion, warn-but-mutate) are original and not covered by S309.",
+      "is_duplicate": false
+    }
+  ],
+  "fix_implemented": false,
+  "fix_description": "No fix needed — verdict is YES_WITH_CAVEATS.",
+  "fix_files": [],
+  "notes": "S006 is not a duplicate of S309 despite sharing the fail-open reset concern. S006's original contribution is the analysis of the destructive migration pipeline (version downgrade, container coercion) that occurs before the fail-open endpoint. Claim 5 (auto-save durability) is overstated — load_plan does not auto-save, though downstream callers can persist the coerced result. The version downgrade (v8→v7 force-set) is the most significant original finding."
+}
