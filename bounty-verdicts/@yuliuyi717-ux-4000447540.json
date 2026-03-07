@@ -1,0 +1,64 @@
+{
+  "submitter": "yuliuyi717-ux",
+  "comment_id": 4000447540,
+  "verdict": "YES_WITH_CAVEATS",
+  "verdict_date": "2026-03-07",
+  "scoreboard_id": "S002",
+  "claim_restated": "The StateModel (schema.py) co-locates raw issue records, derived scoring fields (strict_score, verified_strict_score, stats), and operator decision logs (resolution attestations, subjective assessments) in a single mutable document. merge_scan() (merge.py:123-199) mutates issue lifecycle state and recomputes scores in the same flow. resolve_issues() (resolution.py:99-173) writes manual operator decisions (status, note, attestation) into the same issue records and recomputes stats/scores again. The submitter claims this creates non-commutative behavior, provenance ambiguity, and scaling risk.",
+  "is_poor_engineering": true,
+  "why_poor_engineering": "Co-locating raw evidence, derived scores, and operator decisions in a single mutable dict is a real design coupling. Scores are recomputed from issues on every mutation (merge_scan and resolve_issues both call _recompute_stats), which means the state document serves triple duty as evidence store, decision log, and score cache. This makes it harder to attribute score changes to their cause (detector vs operator action) and prevents independent evolution of these concerns.",
+  "is_significant": false,
+  "why_missed": {
+    "what_should_catch": "A structural detector or subjective review dimension focused on data-model separation — e.g. flagging TypedDicts that mix raw data, derived caches, and user-input fields in one model.",
+    "why_not_caught": "Desloppify's mechanical detectors check for structural patterns (complexity, coupling, god classes) but not for data-model design concerns like mixing raw/derived/operator data. The subjective review could catch this if it reviewed schema.py with a 'data model cohesion' lens, but the current dimensions focus on code-level quality rather than state architecture.",
+    "what_could_catch": "A subjective review dimension for 'state model cohesion' that specifically checks whether persisted state mixes concerns (raw data vs derived caches vs operator decisions). Alternatively, a mechanical check for TypedDicts exceeding N fields with mixed read/write semantics."
+  },
+  "scores": {
+    "signal": 4,
+    "originality": 3,
+    "core_impact": 3,
+    "overall": 3
+  },
+  "claims": [
+    {
+      "id": "claim-1",
+      "title": "StateModel co-locates raw issues with derived scores and operator decisions",
+      "status": "CONFIRMED",
+      "detail": "StateModel (schema.py:259-292) contains issues (raw detector output), strict_score/verified_strict_score/overall_score/objective_score (derived), stats (derived from issues), subjective_assessments (operator/LLM input), and attestation_log/concern_dismissals (operator decisions). empty_state() (schema.py:322-339) initializes all of these in a single dict. This is a factual observation about the code structure."
+    },
+    {
+      "id": "claim-2",
+      "title": "merge_scan() mutates issues and recomputes scores in the same flow",
+      "status": "CONFIRMED",
+      "detail": "merge_scan() (merge.py:123-218) calls upsert_issues() to add/update issues, auto_resolve_disappeared() to change statuses, then _recompute_stats() (merge.py:195-199) to recalculate all derived scores. This is the intended design — scores must reflect current issue state — but it does mean issue mutations and score derivations are entangled in one function."
+    },
+    {
+      "id": "claim-3",
+      "title": "resolve_issues() writes operator decisions and recomputes scores",
+      "status": "CONFIRMED",
+      "detail": "resolve_issues() (resolution.py:99-173) updates issue status, note, attestation fields directly on issue dicts (line 160: issue.update(updates)), then calls _recompute_stats() (line 171). Operator decisions are written into the same Issue records that detectors create, and scores are recomputed immediately after."
+    },
+    {
+      "id": "claim-4",
+      "title": "Non-commutative behavior: scan/resolve ordering changes score trajectory",
+      "status": "CONFIRMED_WITH_CAVEAT",
+      "detail": "Scores are deterministically recomputed from current issue state on every mutation, so the final score for a given set of issues is deterministic regardless of operation order. However, scan_history entries (merge.py:200-209) capture score snapshots at each scan, so the recorded trajectory (score over time) does depend on the interleaving of scan and resolve operations. The 'non-commutative' claim is overstated for final state but has limited validity for history/trajectory data."
+    },
+    {
+      "id": "claim-5",
+      "title": "Provenance ambiguity: score deltas hard to attribute",
+      "status": "CONFIRMED_WITH_CAVEAT",
+      "detail": "There is some truth here — when a score changes, the state alone doesn't cleanly separate detector-driven changes from operator-driven changes. However, the attestation_log (schema.py:290) and scan_history (schema.py:278) do provide separate audit trails. The provenance is not lost, but it requires correlating multiple data structures rather than being immediately readable from a single record."
+    },
+    {
+      "id": "claim-6",
+      "title": "Scaling/concurrency risk requires architectural separation",
+      "status": "INCORRECT",
+      "detail": "Desloppify is a CLI tool that runs sequentially — there is no concurrent access to the state file. The claim that 'as automation/concurrency grows, determinism and auditability degrade' is speculative and premature. The suggested fix (event sourcing with immutable event log and deterministic projection) would be massive over-engineering for the current use case. The state document is locked during operations and written atomically."
+    }
+  ],
+  "fix_implemented": false,
+  "fix_description": "No fix implemented. The observation is valid but the coupling is intentional and pragmatic for a CLI tool. The suggested architectural overhaul (event sourcing) would be disproportionate to the actual risk. If separation were desired, it could be done incrementally by extracting derived scores into a separate computed cache.",
+  "fix_files": [],
+  "notes": "All three code references are accurate and point to real code. The core observation — that StateModel mixes raw data, derived data, and operator decisions — is factually correct. However, the significance is overstated. This is a common and pragmatic pattern for CLI tools with file-based persistence. Scores are always recomputed from issues (not cached independently), so consistency is maintained. The 'non-commutative' and 'concurrency' claims are largely theoretical. The suggested fix (full event sourcing) is extreme over-engineering for a local CLI tool. This reads as a competent architectural critique that correctly identifies a coupling pattern but overstates its practical consequences."
+}
