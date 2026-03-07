@@ -1,0 +1,47 @@
+{
+  "submitter": "agustif",
+  "comment_id": 4000584962,
+  "verdict": "YES_WITH_CAVEATS",
+  "verdict_date": "2026-03-07",
+  "scoreboard_id": "S007",
+  "claim_restated": "Review packet construction is duplicated across three independent code paths (prepare.py, batch/orchestrator.py, external.py) that bypass the canonical builder (packet/build.py:53, coordinator.py:208). Schema/policy drift is already present: max_files_per_batch is applied in prepare.py and orchestrator.py but missing from external.py, and config redaction (redacted_review_config) is applied in prepare.py and orchestrator.py but missing from external.py.",
+  "is_poor_engineering": true,
+  "why_poor_engineering": "Three independent packet-assembly paths duplicate the same setup-lang → prepare_holistic_review → attach-metadata sequence instead of routing through the existing canonical builder. Observable drift has already occurred: external.py omits max_files_per_batch and config redaction, meaning the external review pathway produces packets with different behavior from local prepare and batch-run paths. This is a classic DRY violation with concrete consequences.",
+  "is_significant": true,
+  "why_missed": {
+    "what_should_catch": "A unit test or integration test that asserts all entrypoints produce structurally identical packets (same keys, same config redaction, same batch limits) when given the same inputs.",
+    "why_not_caught": "Each entrypoint was likely developed incrementally for different review workflows (prepare, batch-run, external-session). The canonical builder in packet/build.py was added later but the older paths were never migrated to use it.",
+    "what_could_catch": "A schema-conformance test that builds packets from each entrypoint and diffs the resulting keys/options. Alternatively, a linting rule that flags direct calls to prepare_holistic_review outside packet/build.py."
+  },
+  "scores": {
+    "signal": 5,
+    "originality": 6,
+    "core_impact": 2,
+    "overall": 5
+  },
+  "claims": [
+    {
+      "id": "claim-1",
+      "title": "Packet assembly duplicated across three paths bypassing canonical builder",
+      "status": "CONFIRMED",
+      "detail": "prepare.py:48-59, orchestrator.py:142-153, and external.py:150-161 each independently call review_mod.prepare_holistic_review() with inline option construction, bypassing packet/build.py:53 (build_holistic_packet) and coordinator.py:208 (build_review_packet_payload)."
+    },
+    {
+      "id": "claim-2",
+      "title": "max_files_per_batch missing from external.py",
+      "status": "CONFIRMED",
+      "detail": "prepare.py:55 and orchestrator.py:149 both pass max_files_per_batch=coerce_review_batch_file_limit(config). external.py:150-161 omits this parameter entirely from HolisticReviewPrepareOptions, meaning the external pathway uses no batch file limit."
+    },
+    {
+      "id": "claim-3",
+      "title": "Config redaction missing from external.py",
+      "status": "CONFIRMED",
+      "detail": "prepare.py:70 sets data['config'] = redacted_review_config(config). orchestrator.py:155 sets packet['config'] = redacted_review_config(config). external.py's _prepare_packet_snapshot (lines 125-182) never calls redacted_review_config or sets packet['config'], so config may be absent or unredacted in external-session packets."
+    }
+  ],
+  "overlap_with": [],
+  "fix_implemented": false,
+  "fix_description": "No fix needed — verdict is YES_WITH_CAVEATS.",
+  "fix_files": [],
+  "notes": "All three claims are confirmed with accurate code references (line numbers are within 1-3 lines of cited values after adjusting for the desloppify/ prefix the submitter omitted). The canonical builder in packet/build.py already handles both max_files_per_batch and the full option set correctly — the three bypassing paths simply predate it or were never migrated. The drift is concrete and observable, not hypothetical. No overlap with prior submissions — this is the first to identify review packet construction duplication."
+}
